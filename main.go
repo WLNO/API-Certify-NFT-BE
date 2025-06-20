@@ -9,6 +9,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	_ "github.com/lib/pq"
 )
 
@@ -52,12 +53,15 @@ func main() {
 	}
 
 	e := echo.New()
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+	}))
 	e.GET("/api/events/all", getEventsHandler)
 	e.POST("/api/events/create", createEventHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
-
 func getEventsHandler(c echo.Context) error {
 	rows, err := db.Query(`SELECT id, title, description, vendor_id, start_date, end_date, status, created_at, updated_at FROM events`)
 	if err != nil {
@@ -116,3 +120,4 @@ func createEventHandler(c echo.Context) error {
 
 	return c.JSON(http.StatusCreated, e)
 }
+
