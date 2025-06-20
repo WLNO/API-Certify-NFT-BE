@@ -27,11 +27,64 @@ type Event struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	Picture      string    `json:"picture"`
 	MaxAttendees int       `json:"maxattendees"`
-	Location	 string	   `json:"location"`
+	Location     string    `json:"location"`
 	Attendees    int       `json:"attendees"`
 }
 
+type User struct {
+	ID            int       `json:"id"`
+	Email         string    `json:"email"`
+	WalletAddress string    `json:"wallet_address"`
+	Name          string    `json:"name"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type Vendor struct {
+	ID            int       `json:"id"`
+	VendorName    string    `json:"vendor_name"`
+	Email         string    `json:"email"`
+	ContactInfo   string    `json:"contact_info"`
+	WalletAddress string    `json:"wallet_address"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 var db *sql.DB
+
+func registerUserHandler(c echo.Context) error {
+	var u User
+	if err := c.Bind(&u); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	if u.Name == "" || u.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name and wallet_address are required"})
+	}
+
+	query := `INSERT INTO users (email, wallet_address, name) VALUES ($1, $2, $3) RETURNING id, created_at, updated_at`
+	err := db.QueryRow(query, u.Email, u.WalletAddress, u.Name).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusCreated, u)
+}
+
+func registerVendorHandler(c echo.Context) error {
+	var v Vendor
+	if err := c.Bind(&v); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	if v.VendorName == "" || v.Email == "" || v.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_name, email, and wallet_address are required"})
+	}
+
+	query := `INSERT INTO vendors (vendor_name, email, contact_info, wallet_address) VALUES ($1, $2, $3, $4) RETURNING id, created_at, updated_at`
+	err := db.QueryRow(query, v.VendorName, v.Email, v.ContactInfo, v.WalletAddress).Scan(&v.ID, &v.CreatedAt, &v.UpdatedAt)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusCreated, v)
+}
 
 func main() {
 	var err error
@@ -65,6 +118,8 @@ func main() {
 	}))
 	e.GET("/api/events/all", getEventsHandler)
 	e.POST("/api/events/create", createEventHandler)
+	e.POST("/api/users/register", registerUserHandler)
+	e.POST("/api/vendors/register", registerVendorHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
