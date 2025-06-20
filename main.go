@@ -27,6 +27,7 @@ type Event struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	Picture      string    `json:"picture"`
 	MaxAttendees int       `json:"maxattendees"`
+	Location	 string	   `json:"location"`
 }
 
 var db *sql.DB
@@ -67,7 +68,7 @@ func main() {
 	e.Logger.Fatal(e.Start(":4002"))
 }
 func getEventsHandler(c echo.Context) error {
-	rows, err := db.Query(`SELECT id, title, description, vendor_id, start_date, end_date, status, created_at, updated_at, picture, maxattendees FROM events`)
+	rows, err := db.Query(`SELECT id, title, description, vendor_id, start_date, end_date, status, created_at, updated_at, picture, maxattendees, location FROM events`)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -76,7 +77,7 @@ func getEventsHandler(c echo.Context) error {
 	var events []Event
 	for rows.Next() {
 		var e Event
-		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees)
+		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
