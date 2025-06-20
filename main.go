@@ -86,6 +86,35 @@ func registerVendorHandler(c echo.Context) error {
 	return c.JSON(http.StatusCreated, v)
 }
 
+func loginHandler(c echo.Context) error {
+	var body struct {
+		WalletAddress string `json:"wallet_address"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+	if body.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
+	}
+
+	var exists bool
+	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE wallet_address = $1)`, body.WalletAddress).Scan(&exists)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	if exists {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"isNewUser":     false,
+			"wallet_address": body.WalletAddress,
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"isNewUser": true,
+	})
+}
+
 func main() {
 	var err error
 
@@ -120,6 +149,7 @@ func main() {
 	e.POST("/api/events/create", createEventHandler)
 	e.POST("/api/users/register", registerUserHandler)
 	e.POST("/api/vendors/register", registerVendorHandler)
+	e.POST("/api/auth/login", loginHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
