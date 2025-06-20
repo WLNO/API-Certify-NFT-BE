@@ -1,0 +1,13 @@
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "4002:4002"
+    restart: always
+    networks:
+      - certify-nft-network
+
+networks:
+  certify-nft-network:
+    external: true 
