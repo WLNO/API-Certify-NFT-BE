@@ -28,6 +28,7 @@ type Event struct {
 	Picture      string    `json:"picture"`
 	MaxAttendees int       `json:"maxattendees"`
 	Location	 string	   `json:"location"`
+	Attendees    int       `json:"attendees"`
 }
 
 var db *sql.DB
@@ -68,7 +69,16 @@ func main() {
 	e.Logger.Fatal(e.Start(":4002"))
 }
 func getEventsHandler(c echo.Context) error {
-	rows, err := db.Query(`SELECT id, title, description, vendor_id, start_date, end_date, status, created_at, updated_at, picture, maxattendees, location FROM events`)
+	rows, err := db.Query(`
+    SELECT 
+      e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date, 
+      e.status, e.created_at, e.updated_at, e.picture, e.maxattendees, e.location,
+      COUNT(a.id) as attendees
+    FROM events e
+    LEFT JOIN attendance a ON a.event_id = e.id AND a.attendance_status = 'present'
+    GROUP BY e.id
+    ORDER BY e.start_date ASC
+  `)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -77,7 +87,7 @@ func getEventsHandler(c echo.Context) error {
 	var events []Event
 	for rows.Next() {
 		var e Event
-		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location)
+		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location, &e.Attendees)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
