@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	_ "github.com/lib/pq"
 )
@@ -26,7 +28,18 @@ var db *sql.DB
 
 func main() {
 	var err error
-	dsn := "postgres://admin:10062004Dk-@103.175.219.68:5432/certify_nft?sslmode=disable"
+
+	// Load .env file
+	err = godotenv.Load()
+	if err != nil {
+		panic(fmt.Sprintf("Error loading .env file: %v", err))
+	}
+
+	dsn := os.Getenv("DATABASE_DSN")
+	if dsn == "" {
+		panic("DATABASE_DSN is not set in environment")
+	}
+
 	db, err = sql.Open("postgres", dsn)
 	if err != nil {
 		panic(fmt.Sprintf("Error opening database: %v", err))
