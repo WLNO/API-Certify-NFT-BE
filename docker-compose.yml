@@ -7,6 +7,8 @@ services:
     restart: always
     networks:
       - certify-nft-network
+    volumes:
+      - .env:/app/.env
 
 networks:
   certify-nft-network:
