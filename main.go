@@ -52,7 +52,7 @@ func main() {
 	}
 
 	e := echo.New()
-	e.GET("/events", getEventsHandler)
+	e.GET("/api/events/all", getEventsHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
