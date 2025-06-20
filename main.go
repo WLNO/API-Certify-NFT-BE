@@ -53,6 +53,7 @@ func main() {
 
 	e := echo.New()
 	e.GET("/api/events/all", getEventsHandler)
+	e.POST("/api/events/create", createEventHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -75,4 +76,43 @@ func getEventsHandler(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, events)
+}
+
+func createEventHandler(c echo.Context) error {
+	var e Event
+	if err := c.Bind(&e); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+
+	// Validasi input
+	if e.Title == "" || e.VendorID == 0 || e.StartDate.IsZero() || e.EndDate.IsZero() || e.Status == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing required fields"})
+	}
+
+	if e.StartDate.After(e.EndDate) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "start_date must be before end_date"})
+	}
+
+	// Masukkan data ke database
+	query := `
+		INSERT INTO events (title, description, vendor_id, start_date, end_date, status)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, created_at, updated_at
+	`
+
+	err := db.QueryRow(
+		query,
+		e.Title,
+		e.Description,
+		e.VendorID,
+		e.StartDate,
+		e.EndDate,
+		e.Status,
+	).Scan(&e.ID, &e.CreatedAt, &e.UpdatedAt)
+
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusCreated, e)
 }
