@@ -3,8 +3,10 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -14,15 +16,17 @@ import (
 )
 
 type Event struct {
-	ID          int       `json:"id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	VendorID    int       `json:"vendor_id"`
-	StartDate   time.Time `json:"start_date"`
-	EndDate     time.Time `json:"end_date"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           int       `json:"id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	VendorID     int       `json:"vendor_id"`
+	StartDate    time.Time `json:"start_date"`
+	EndDate      time.Time `json:"end_date"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Picture      string    `json:"picture"`
+	MaxAttendees int       `json:"maxattendees"`
 }
 
 var db *sql.DB
@@ -63,7 +67,7 @@ func main() {
 	e.Logger.Fatal(e.Start(":4002"))
 }
 func getEventsHandler(c echo.Context) error {
-	rows, err := db.Query(`SELECT id, title, description, vendor_id, start_date, end_date, status, created_at, updated_at FROM events`)
+	rows, err := db.Query(`SELECT id, title, description, vendor_id, start_date, end_date, status, created_at, updated_at, picture, maxattendees FROM events`)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -72,7 +76,7 @@ func getEventsHandler(c echo.Context) error {
 	var events []Event
 	for rows.Next() {
 		var e Event
-		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt)
+		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
@@ -83,41 +87,106 @@ func getEventsHandler(c echo.Context) error {
 }
 
 func createEventHandler(c echo.Context) error {
-	var e Event
-	if err := c.Bind(&e); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	title := c.FormValue("title")
+	description := c.FormValue("description")
+	vendorIDStr := c.FormValue("vendor_id")
+	startDateStr := c.FormValue("start_date")
+	endDateStr := c.FormValue("end_date")
+	status := c.FormValue("status")
+	maxAttendeesStr := c.FormValue("maxattendees")
+
+	if title == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "title is required"})
+	}
+	if vendorIDStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_id is required"})
+	}
+	if startDateStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "start_date is required"})
+	}
+	if endDateStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "end_date is required"})
+	}
+	if status == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "status is required"})
+	}
+	if maxAttendeesStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "maxattendees is required"})
 	}
 
-	// Validasi input
-	if e.Title == "" || e.VendorID == 0 || e.StartDate.IsZero() || e.EndDate.IsZero() || e.Status == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing required fields"})
+	file, err := c.FormFile("picture")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "picture file is required"})
+	}
+	filename := fmt.Sprintf("uploads/%d_%s", time.Now().Unix(), file.Filename)
+
+	src, err := file.Open()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to open uploaded file"})
+	}
+	defer src.Close()
+
+	dst, err := os.Create(filename)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create file on server"})
+	}
+	defer dst.Close()
+
+	if _, err = io.Copy(dst, src); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to save picture"})
 	}
 
-	if e.StartDate.After(e.EndDate) {
+	vendorID, err := strconv.Atoi(vendorIDStr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_id must be a number"})
+	}	
+	maxAttendees, err := strconv.Atoi(maxAttendeesStr)
+	if err != nil || maxAttendees <= 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "maxattendees must be a positive number"})
+	}
+	startDate, err := time.Parse(time.RFC3339, startDateStr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid start_date format"})
+	}
+	endDate, err := time.Parse(time.RFC3339, endDateStr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid end_date format"})
+	}
+	if startDate.After(endDate) {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "start_date must be before end_date"})
 	}
 
-	// Masukkan data ke database
 	query := `
-		INSERT INTO events (title, description, vendor_id, start_date, end_date, status)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO events (title, description, vendor_id, start_date, end_date, status, picture, maxattendees)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at
 	`
 
-	err := db.QueryRow(
+	var event Event
+	event.Title = title
+	event.Description = description
+	event.VendorID = vendorID
+	event.StartDate = startDate
+	event.EndDate = endDate
+	event.Status = status
+	event.Picture = filename
+	event.MaxAttendees = maxAttendees
+
+	err = db.QueryRow(
 		query,
-		e.Title,
-		e.Description,
-		e.VendorID,
-		e.StartDate,
-		e.EndDate,
-		e.Status,
-	).Scan(&e.ID, &e.CreatedAt, &e.UpdatedAt)
+		event.Title,
+		event.Description,
+		event.VendorID,
+		event.StartDate,
+		event.EndDate,
+		event.Status,
+		event.Picture,
+		event.MaxAttendees,
+	).Scan(&event.ID, &event.CreatedAt, &event.UpdatedAt)
 
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	return c.JSON(http.StatusCreated, e)
+	return c.JSON(http.StatusCreated, event)
 }
-
