@@ -61,8 +61,16 @@ func registerUserHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name and wallet_address are required"})
 	}
 
+	registered, err := isWalletRegistered(u.WalletAddress)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "server error"})
+	}
+	if registered {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "wallet address already registered with another account"})
+	}
+
 	query := `INSERT INTO users (email, wallet_address, name) VALUES ($1, $2, $3) RETURNING id, created_at, updated_at`
-	err := db.QueryRow(query, u.Email, u.WalletAddress, u.Name).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
+	err = db.QueryRow(query, u.Email, u.WalletAddress, u.Name).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -78,8 +86,16 @@ func registerVendorHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_name, email, and wallet_address are required"})
 	}
 
+	registered, err := isWalletRegistered(v.WalletAddress)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "server error"})
+	}
+	if registered {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "wallet address already registered with another account"})
+	}
+
 	query := `INSERT INTO vendors (vendor_name, email, contact_info, wallet_address) VALUES ($1, $2, $3, $4) RETURNING id, created_at, updated_at`
-	err := db.QueryRow(query, v.VendorName, v.Email, v.ContactInfo, v.WalletAddress).Scan(&v.ID, &v.CreatedAt, &v.UpdatedAt)
+	err = db.QueryRow(query, v.VendorName, v.Email, v.ContactInfo, v.WalletAddress).Scan(&v.ID, &v.CreatedAt, &v.UpdatedAt)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -130,6 +146,22 @@ func loginHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"isNewUser": true,
 	})
+}
+
+func isWalletRegistered(wallet string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE wallet_address = $1)`, wallet).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return true, nil
+	}
+	err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM vendors WHERE wallet_address = $1)`, wallet).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 func main() {
