@@ -199,7 +199,7 @@ func main() {
 	e.POST("/api/users/register", registerUserHandler)
 	e.POST("/api/vendors/register", registerVendorHandler)
 	e.POST("/api/auth/login", loginHandler)
-	e.GET("/api/events/by-user", getEventsByUserHandler)
+	e.GET("/api/users/:id/events", getEventsByUserIdHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -233,8 +233,8 @@ func getEventsHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, events)
 }
 
-func getEventsByUserHandler(c echo.Context) error {
-	userID := c.QueryParam("user_id")
+func getEventsByUserIdHandler(c echo.Context) error {
+	userID := c.Param("id")
 	if userID == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "user_id is required"})
 	}
@@ -268,7 +268,6 @@ func getEventsByUserHandler(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, events)
 }
-
 
 func createEventHandler(c echo.Context) error {
 	title := c.FormValue("title")
