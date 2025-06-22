@@ -200,6 +200,7 @@ func main() {
 	e.POST("/api/vendors/register", registerVendorHandler)
 	e.POST("/api/auth/login", loginHandler)
 	e.GET("/api/users/:id/events", getEventsByUserIdHandler)
+	e.GET("/api/users/:id/certificate", getCertificatesByUserIdHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -267,6 +268,66 @@ func getEventsByUserIdHandler(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, events)
+}
+
+// CertificateWithEvent combines certificate data with event fields for richer output
+type CertificateWithEvent struct {
+	ID                  int       `json:"id"`
+	EventID             int       `json:"event_id"`
+	UserID              int       `json:"user_id"`
+	CertificateData     string    `json:"certificate_data"`
+	MintStatus          string    `json:"mint_status"`
+	MintTransactionHash string    `json:"mint_transaction_hash"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	EventTitle          string    `json:"event_title"`
+	EventDescription    string    `json:"event_description"`
+	EventStartDate      time.Time `json:"event_start_date"`
+	EventLocation       string    `json:"event_location"`
+	EventPicture        string    `json:"event_picture"`
+}
+
+func getCertificatesByUserIdHandler(c echo.Context) error {
+	userID := c.Param("id")
+	if userID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "user_id is required"})
+	}
+
+	rows, err := db.Query(`
+		SELECT 
+			c.id, c.event_id, c.user_id, c.certificate_data, c.mint_status, c.mint_transaction_hash, c.created_at, c.updated_at,
+			e.title, e.description, e.start_date, e.location, e.picture
+		FROM certificates c
+		JOIN events e ON c.event_id = e.id
+		WHERE c.user_id = $1
+		ORDER BY c.created_at DESC
+	`, userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	var certificates []CertificateWithEvent
+	for rows.Next() {
+		var cert CertificateWithEvent
+		var pictureRaw string
+		err := rows.Scan(
+			&cert.ID, &cert.EventID, &cert.UserID, &cert.CertificateData, &cert.MintStatus, &cert.MintTransactionHash, &cert.CreatedAt, &cert.UpdatedAt,
+			&cert.EventTitle, &cert.EventDescription, &cert.EventStartDate, &cert.EventLocation, &pictureRaw,
+		)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		// Convert picture field to URL path
+		if pictureRaw != "" {
+			cert.EventPicture = "https://api.gpadaka.com/" + pictureRaw
+		} else {
+			cert.EventPicture = ""
+		}
+		certificates = append(certificates, cert)
+	}
+
+	return c.JSON(http.StatusOK, certificates)
 }
 
 func createEventHandler(c echo.Context) error {
