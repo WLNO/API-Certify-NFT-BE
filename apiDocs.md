@@ -10,9 +10,396 @@ Currently, the API uses wallet address-based authentication. Users and vendors a
 
 ---
 
+## Endpoint Summary
+
+### Authentication
+- **`POST /api/auth/login`**: Authenticates a user or vendor.
+
+### Users
+- **`POST /api/users/register`**: Registers a new user account.
+- **`GET /api/users/:walletAddress/events`**: Retrieves all events for a specific user.
+- **`GET /api/users/:walletAddress/certificate`**: Retrieves all certificates for a specific user.
+
+### Vendors
+- **`POST /api/vendors/register`**: Registers a new vendor account.
+- **`GET /api/vendors/:walletAddress/events`**: Retrieves all events for a specific vendor.
+
+### Events
+- **`GET /api/events/all`**: Retrieves all events.
+- **`POST /api/events/create`**: Creates a new event.
+
+---
+
 ## Endpoints
 
-### 1. Get All Events
+### Auth
+
+#### 1. Login
+**POST** `/api/auth/login`
+
+Authenticates a user or vendor using their wallet address.
+
+#### Request
+**Content-Type:** `application/json`
+
+```json
+{
+  "wallet_address": "0x1234567890abcdef..."
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| wallet_address | string | Yes | User's or vendor's wallet address |
+
+#### Response
+**Success (200 OK) - Existing User**
+```json
+{
+  "isNewUser": false,
+  "wallet_address": "0x1234567890abcdef...",
+  "role": "users"
+}
+```
+
+**Success (200 OK) - Existing Vendor**
+```json
+{
+  "isNewUser": false,
+  "wallet_address": "0x1234567890abcdef...",
+  "role": "vendors"
+}
+```
+
+**Success (200 OK) - New User**
+```json
+{
+  "isNewUser": true
+}
+```
+
+**Error Responses**
+
+**400 Bad Request - Invalid Request**
+```json
+{
+  "error": "Invalid request"
+}
+```
+
+**400 Bad Request - Missing Wallet Address**
+```json
+{
+  "error": "wallet_address is required"
+}
+```
+
+**500 Internal Server Error**
+```json
+{
+  "error": "database error message"
+}
+```
+
+---
+
+### Users
+
+#### 2. Register User
+**POST** `/api/users/register`
+
+Registers a new user account.
+
+#### Request
+**Content-Type:** `application/json`
+
+```json
+{
+  "email": "user@example.com",
+  "wallet_address": "0x1234567890abcdef...",
+  "name": "John Doe"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| email | string | No | User's email address |
+| wallet_address | string | Yes | User's wallet address (must be unique) |
+| name | string | Yes | User's full name |
+
+#### Response
+**Success (201 Created)**
+```json
+{
+  "id": 1,
+  "email": "user@example.com",
+  "wallet_address": "0x1234567890abcdef...",
+  "name": "John Doe",
+  "created_at": "2024-06-10T10:00:00Z",
+  "updated_at": "2024-06-10T10:00:00Z"
+}
+```
+
+**Error Responses**
+
+**400 Bad Request - Invalid Request**
+```json
+{
+  "error": "invalid request"
+}
+```
+
+**400 Bad Request - Missing Required Fields**
+```json
+{
+  "error": "name and wallet_address are required"
+}
+```
+
+**409 Conflict - Wallet Already Registered**
+```json
+{
+  "error": "wallet address already registered with another account"
+}
+```
+
+**500 Internal Server Error**
+```json
+{
+  "error": "server error"
+}
+```
+
+---
+
+#### 3. Get Events by User
+**GET** `/api/users/:walletAddress/events`
+
+Retrieves all events a specific user is registered for, based on their wallet address.
+
+#### Path Parameters
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| walletAddress | string | Yes | The user's wallet address. |
+
+#### Response
+**Success (200 OK)**
+Returns an array of `Event` objects.
+```json
+[
+  {
+    "id": 1,
+    "title": "NFT Conference 2024",
+    "description": "Annual NFT conference",
+    "vendor_id": 1,
+    "start_date": "2024-06-15T09:00:00Z",
+    "end_date": "2024-06-15T17:00:00Z",
+    "status": "upcoming",
+    "created_at": "2024-06-10T10:00:00Z",
+    "updated_at": "2024-06-10T10:00:00Z",
+    "picture": "uploads/1718000000_event.jpg",
+    "maxattendees": 100,
+    "location": "Jakarta Convention Center",
+    "attendees": 25
+  }
+]
+```
+
+**Error Responses**
+
+**404 Not Found**
+```json
+{
+  "error": "user not found"
+}
+```
+
+**500 Internal Server Error**
+```json
+{
+  "error": "database error message"
+}
+```
+
+---
+
+#### 4. Get Certificates by User
+**GET** `/api/users/:walletAddress/certificate`
+
+Retrieves all certificates for a specific user, combined with event details.
+
+#### Path Parameters
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| walletAddress | string | Yes | The user's wallet address. |
+
+#### Response
+**Success (200 OK)**
+Returns an array of `CertificateWithEvent` objects.
+```json
+[
+  {
+    "id": 1,
+    "event_id": 12,
+    "user_id": 1,
+    "certificate_data": "ipfs://bafybeig.../metadata.json",
+    "mint_status": "minted",
+    "mint_transaction_hash": "0xabc...",
+    "created_at": "2024-06-16T10:00:00Z",
+    "updated_at": "2024-06-16T10:00:00Z",
+    "event_title": "NFT Conference 2024",
+    "event_description": "Annual NFT conference",
+    "event_start_date": "2024-06-15T09:00:00Z",
+    "event_location": "Jakarta Convention Center",
+    "event_picture": "https://api.gpadaka.com/uploads/1718000000_event.jpg"
+  }
+]
+```
+
+**Error Responses**
+
+**404 Not Found**
+```json
+{
+  "error": "user not found"
+}
+```
+
+**500 Internal Server Error**
+```json
+{
+  "error": "database error message"
+}
+```
+
+---
+
+### Vendors
+
+#### 5. Register Vendor
+**POST** `/api/vendors/register`
+
+Registers a new vendor account.
+
+#### Request
+**Content-Type:** `application/json`
+
+```json
+{
+  "vendor_name": "NFT Events Co.",
+  "email": "vendor@example.com",
+  "contact_info": "+62-812-3456-7890",
+  "wallet_address": "0xabcdef1234567890..."
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| vendor_name | string | Yes | Vendor's business name |
+| email | string | Yes | Vendor's email address |
+| contact_info | string | No | Vendor's contact information |
+| wallet_address | string | Yes | Vendor's wallet address (must be unique) |
+
+#### Response
+**Success (201 Created)**
+```json
+{
+  "id": 1,
+  "vendor_name": "NFT Events Co.",
+  "email": "vendor@example.com",
+  "contact_info": "+62-812-3456-7890",
+  "wallet_address": "0xabcdef1234567890...",
+  "created_at": "2024-06-10T10:00:00Z",
+  "updated_at": "2024-06-10T10:00:00Z"
+}
+```
+
+**Error Responses**
+
+**400 Bad Request - Invalid Request**
+```json
+{
+  "error": "invalid request"
+}
+```
+
+**400 Bad Request - Missing Required Fields**
+```json
+{
+  "error": "vendor_name, email, and wallet_address are required"
+}
+```
+
+**409 Conflict - Wallet Already Registered**
+```json
+{
+  "error": "wallet address already registered with another account"
+}
+```
+
+**500 Internal Server Error**
+```json
+{
+  "error": "server error"
+}
+```
+
+---
+
+#### 6. Get Events by Vendor
+**GET** `/api/vendors/:walletAddress/events`
+
+Retrieves all events created by a specific vendor, based on their wallet address.
+
+#### Path Parameters
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| walletAddress | string | Yes | The vendor's wallet address. |
+
+#### Response
+**Success (200 OK)**
+Returns an array of `Event` objects.
+```json
+[
+  {
+    "id": 1,
+    "title": "NFT Conference 2024",
+    "description": "Annual NFT conference",
+    "vendor_id": 1,
+    "start_date": "2024-06-15T09:00:00Z",
+    "end_date": "2024-06-15T17:00:00Z",
+    "status": "upcoming",
+    "created_at": "2024-06-10T10:00:00Z",
+    "updated_at": "2024-06-10T10:00:00Z",
+    "picture": "uploads/1718000000_event.jpg",
+    "maxattendees": 100,
+    "location": "Jakarta Convention Center",
+    "attendees": 25
+  }
+]
+```
+
+**Error Responses**
+
+**404 Not Found**
+```json
+{
+  "error": "vendor not found"
+}
+```
+
+**500 Internal Server Error**
+```json
+{
+  "error": "database error message"
+}
+```
+
+---
+
+### Events
+
+#### 7. Get All Events
 **GET** `/api/events/all`
 
 Retrieves all events with attendee count.
@@ -48,7 +435,7 @@ Retrieves all events with attendee count.
 
 ---
 
-### 2. Create Event
+#### 8. Create Event
 **POST** `/api/events/create`
 
 Creates a new event. Requires multipart form data.
@@ -139,365 +526,6 @@ Creates a new event. Requires multipart form data.
 ```
 
 **500 Internal Server Error - Database Issues**
-```json
-{
-  "error": "database error message"
-}
-```
-
----
-
-### 3. Register User
-**POST** `/api/users/register`
-
-Registers a new user account.
-
-#### Request
-**Content-Type:** `application/json`
-
-```json
-{
-  "email": "user@example.com",
-  "wallet_address": "0x1234567890abcdef...",
-  "name": "John Doe"
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| email | string | No | User's email address |
-| wallet_address | string | Yes | User's wallet address (must be unique) |
-| name | string | Yes | User's full name |
-
-#### Response
-**Success (201 Created)**
-```json
-{
-  "id": 1,
-  "email": "user@example.com",
-  "wallet_address": "0x1234567890abcdef...",
-  "name": "John Doe",
-  "created_at": "2024-06-10T10:00:00Z",
-  "updated_at": "2024-06-10T10:00:00Z"
-}
-```
-
-**Error Responses**
-
-**400 Bad Request - Invalid Request**
-```json
-{
-  "error": "invalid request"
-}
-```
-
-**400 Bad Request - Missing Required Fields**
-```json
-{
-  "error": "name and wallet_address are required"
-}
-```
-
-**409 Conflict - Wallet Already Registered**
-```json
-{
-  "error": "wallet address already registered with another account"
-}
-```
-
-**500 Internal Server Error**
-```json
-{
-  "error": "server error"
-}
-```
-
----
-
-### 4. Register Vendor
-**POST** `/api/vendors/register`
-
-Registers a new vendor account.
-
-#### Request
-**Content-Type:** `application/json`
-
-```json
-{
-  "vendor_name": "NFT Events Co.",
-  "email": "vendor@example.com",
-  "contact_info": "+62-812-3456-7890",
-  "wallet_address": "0xabcdef1234567890..."
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| vendor_name | string | Yes | Vendor's business name |
-| email | string | Yes | Vendor's email address |
-| contact_info | string | No | Vendor's contact information |
-| wallet_address | string | Yes | Vendor's wallet address (must be unique) |
-
-#### Response
-**Success (201 Created)**
-```json
-{
-  "id": 1,
-  "vendor_name": "NFT Events Co.",
-  "email": "vendor@example.com",
-  "contact_info": "+62-812-3456-7890",
-  "wallet_address": "0xabcdef1234567890...",
-  "created_at": "2024-06-10T10:00:00Z",
-  "updated_at": "2024-06-10T10:00:00Z"
-}
-```
-
-**Error Responses**
-
-**400 Bad Request - Invalid Request**
-```json
-{
-  "error": "invalid request"
-}
-```
-
-**400 Bad Request - Missing Required Fields**
-```json
-{
-  "error": "vendor_name, email, and wallet_address are required"
-}
-```
-
-**409 Conflict - Wallet Already Registered**
-```json
-{
-  "error": "wallet address already registered with another account"
-}
-```
-
-**500 Internal Server Error**
-```json
-{
-  "error": "server error"
-}
-```
-
----
-
-### 5. Login
-**POST** `/api/auth/login`
-
-Authenticates a user or vendor using their wallet address.
-
-#### Request
-**Content-Type:** `application/json`
-
-```json
-{
-  "wallet_address": "0x1234567890abcdef..."
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| wallet_address | string | Yes | User's or vendor's wallet address |
-
-#### Response
-**Success (200 OK) - Existing User**
-```json
-{
-  "isNewUser": false,
-  "wallet_address": "0x1234567890abcdef...",
-  "role": "users"
-}
-```
-
-**Success (200 OK) - Existing Vendor**
-```json
-{
-  "isNewUser": false,
-  "wallet_address": "0x1234567890abcdef...",
-  "role": "vendors"
-}
-```
-
-**Success (200 OK) - New User**
-```json
-{
-  "isNewUser": true
-}
-```
-
-**Error Responses**
-
-**400 Bad Request - Invalid Request**
-```json
-{
-  "error": "Invalid request"
-}
-```
-
-**400 Bad Request - Missing Wallet Address**
-```json
-{
-  "error": "wallet_address is required"
-}
-```
-
-**500 Internal Server Error**
-```json
-{
-  "error": "database error message"
-}
-```
-
----
-
-### 6. Get Events by User
-**GET** `/api/users/:walletAddress/events`
-
-Retrieves all events a specific user is registered for, based on their wallet address.
-
-#### Path Parameters
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| walletAddress | string | Yes | The user's wallet address. |
-
-#### Response
-**Success (200 OK)**
-Returns an array of `Event` objects.
-```json
-[
-  {
-    "id": 1,
-    "title": "NFT Conference 2024",
-    "description": "Annual NFT conference",
-    "vendor_id": 1,
-    "start_date": "2024-06-15T09:00:00Z",
-    "end_date": "2024-06-15T17:00:00Z",
-    "status": "upcoming",
-    "created_at": "2024-06-10T10:00:00Z",
-    "updated_at": "2024-06-10T10:00:00Z",
-    "picture": "uploads/1718000000_event.jpg",
-    "maxattendees": 100,
-    "location": "Jakarta Convention Center",
-    "attendees": 25
-  }
-]
-```
-
-**Error Responses**
-
-**404 Not Found**
-```json
-{
-  "error": "user not found"
-}
-```
-
-**500 Internal Server Error**
-```json
-{
-  "error": "database error message"
-}
-```
-
----
-
-### 7. Get Events by Vendor
-**GET** `/api/vendors/:walletAddress/events`
-
-Retrieves all events created by a specific vendor, based on their wallet address.
-
-#### Path Parameters
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| walletAddress | string | Yes | The vendor's wallet address. |
-
-#### Response
-**Success (200 OK)**
-Returns an array of `Event` objects.
-```json
-[
-  {
-    "id": 1,
-    "title": "NFT Conference 2024",
-    "description": "Annual NFT conference",
-    "vendor_id": 1,
-    "start_date": "2024-06-15T09:00:00Z",
-    "end_date": "2024-06-15T17:00:00Z",
-    "status": "upcoming",
-    "created_at": "2024-06-10T10:00:00Z",
-    "updated_at": "2024-06-10T10:00:00Z",
-    "picture": "uploads/1718000000_event.jpg",
-    "maxattendees": 100,
-    "location": "Jakarta Convention Center",
-    "attendees": 25
-  }
-]
-```
-
-**Error Responses**
-
-**404 Not Found**
-```json
-{
-  "error": "vendor not found"
-}
-```
-
-**500 Internal Server Error**
-```json
-{
-  "error": "database error message"
-}
-```
-
----
-
-### 8. Get Certificates by User
-**GET** `/api/users/:walletAddress/certificate`
-
-Retrieves all certificates for a specific user, combined with event details.
-
-#### Path Parameters
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| walletAddress | string | Yes | The user's wallet address. |
-
-#### Response
-**Success (200 OK)**
-Returns an array of `CertificateWithEvent` objects.
-```json
-[
-  {
-    "id": 1,
-    "event_id": 12,
-    "user_id": 1,
-    "certificate_data": "ipfs://bafybeig.../metadata.json",
-    "mint_status": "minted",
-    "mint_transaction_hash": "0xabc...",
-    "created_at": "2024-06-16T10:00:00Z",
-    "updated_at": "2024-06-16T10:00:00Z",
-    "event_title": "NFT Conference 2024",
-    "event_description": "Annual NFT conference",
-    "event_start_date": "2024-06-15T09:00:00Z",
-    "event_location": "Jakarta Convention Center",
-    "event_picture": "https://api.gpadaka.com/uploads/1718000000_event.jpg"
-  }
-]
-```
-
-**Error Responses**
-
-**404 Not Found**
-```json
-{
-  "error": "user not found"
-}
-```
-
-**500 Internal Server Error**
 ```json
 {
   "error": "database error message"
