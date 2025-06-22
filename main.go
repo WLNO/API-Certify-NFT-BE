@@ -199,9 +199,11 @@ func main() {
 	e.POST("/api/users/register", registerUserHandler)
 	e.POST("/api/vendors/register", registerVendorHandler)
 	e.POST("/api/auth/login", loginHandler)
+	e.GET("/api/events/by-user", getEventsByUserHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
+
 func getEventsHandler(c echo.Context) error {
 	rows, err := db.Query(`
     SELECT 
@@ -230,6 +232,43 @@ func getEventsHandler(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, events)
 }
+
+func getEventsByUserHandler(c echo.Context) error {
+	userID := c.QueryParam("user_id")
+	if userID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "user_id is required"})
+	}
+
+	rows, err := db.Query(`
+		SELECT 
+			e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date, 
+			e.status, e.created_at, e.updated_at, e.picture, e.maxattendees, e.location,
+			COUNT(a2.id) as attendees
+		FROM events e
+		INNER JOIN attendance a ON a.event_id = e.id
+		LEFT JOIN attendance a2 ON a2.event_id = e.id AND a2.attendance_status = 'present'
+		WHERE a.user_id = $1
+		GROUP BY e.id
+		ORDER BY e.start_date ASC
+	`, userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		var e Event
+		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location, &e.Attendees)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		events = append(events, e)
+	}
+
+	return c.JSON(http.StatusOK, events)
+}
+
 
 func createEventHandler(c echo.Context) error {
 	title := c.FormValue("title")
@@ -335,3 +374,6 @@ func createEventHandler(c echo.Context) error {
 
 	return c.JSON(http.StatusCreated, event)
 }
+
+
+
