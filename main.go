@@ -97,16 +97,33 @@ func loginHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
 	}
 
-	var exists bool
-	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE wallet_address = $1)`, body.WalletAddress).Scan(&exists)
+	var role string
+
+	// Cek apakah wallet_address ada di tabel users
+	var userExists bool
+	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE wallet_address = $1)`, body.WalletAddress).Scan(&userExists)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
+	if userExists {
+		role = "users"
+	} else {
+		// Jika tidak di users, cek di vendors
+		var vendorExists bool
+		err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM vendors WHERE wallet_address = $1)`, body.WalletAddress).Scan(&vendorExists)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		if vendorExists {
+			role = "vendors"
+		}
+	}
 
-	if exists {
+	if role != "" {
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"isNewUser":     false,
 			"wallet_address": body.WalletAddress,
+			"role":           role,
 		})
 	}
 
