@@ -199,8 +199,9 @@ func main() {
 	e.POST("/api/users/register", registerUserHandler)
 	e.POST("/api/vendors/register", registerVendorHandler)
 	e.POST("/api/auth/login", loginHandler)
-	e.GET("/api/users/:id/events", getEventsByUserIdHandler)
-	e.GET("/api/users/:id/certificate", getCertificatesByUserIdHandler)
+	e.GET("/api/users/:walletAddress/events", getEventsByWalletAddressHandler)
+	e.GET("/api/users/:walletAddress/certificate", getCertificatesByWalletAddressHandler)
+	e.GET("/api/vendors/:walletAddress/events", getEventsByVendorWalletAddressHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -234,10 +235,19 @@ func getEventsHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, events)
 }
 
-func getEventsByUserIdHandler(c echo.Context) error {
-	userID := c.Param("id")
-	if userID == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "user_id is required"})
+func getEventsByWalletAddressHandler(c echo.Context) error {
+	walletAddress := c.Param("walletAddress")
+	if walletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress is required"})
+	}
+
+	var userID int
+	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, walletAddress).Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
 	rows, err := db.Query(`
@@ -287,10 +297,70 @@ type CertificateWithEvent struct {
 	EventPicture        string    `json:"event_picture"`
 }
 
-func getCertificatesByUserIdHandler(c echo.Context) error {
-	userID := c.Param("id")
-	if userID == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "user_id is required"})
+// Handler to get events by vendor wallet address
+func getEventsByVendorWalletAddressHandler(c echo.Context) error {
+	walletAddress := c.Param("walletAddress")
+	if walletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress is required"})
+	}
+
+	var vendorID int
+	err := db.QueryRow(`SELECT id FROM vendors WHERE wallet_address = $1`, walletAddress).Scan(&vendorID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "vendor not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	query := `
+		SELECT 
+			e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date, 
+			e.status, e.created_at, e.updated_at, e.picture, e.maxattendees, e.location,
+			COALESCE(present_count.attendees, 0) as attendees
+		FROM events e
+		LEFT JOIN (
+			SELECT event_id, COUNT(id) as attendees
+			FROM attendance
+			WHERE attendance_status = 'present'
+			GROUP BY event_id
+		) present_count ON e.id = present_count.event_id
+		WHERE e.vendor_id = $1
+		ORDER BY e.start_date ASC
+	`
+
+	rows, err := db.Query(query, vendorID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		var e Event
+		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location, &e.Attendees)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		events = append(events, e)
+	}
+
+	return c.JSON(http.StatusOK, events)
+}
+
+func getCertificatesByWalletAddressHandler(c echo.Context) error {
+	walletAddress := c.Param("walletAddress")
+	if walletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress is required"})
+	}
+
+	var userID int
+	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, walletAddress).Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
 	rows, err := db.Query(`
@@ -434,6 +504,3 @@ func createEventHandler(c echo.Context) error {
 
 	return c.JSON(http.StatusCreated, event)
 }
-
-
-
