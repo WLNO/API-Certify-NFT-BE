@@ -30,8 +30,8 @@ type Event struct {
 	MaxAttendees int             `json:"maxattendees"`
 	Location     string          `json:"location"`
 	Attendees    int             `json:"attendees"`
-	Requirements json.RawMessage `json:"requirements"`
-	Agenda       json.RawMessage `json:"agenda"`
+	Requirements json.RawMessage `json:"requirements,omitempty"`
+	Agenda       json.RawMessage `json:"agenda,omitempty"`
 }
 
 type User struct {
@@ -228,12 +228,43 @@ func getEventsHandler(c echo.Context) error {
 
 	var events []Event
 	for rows.Next() {
-		var e Event
-		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location, &e.Attendees)
+		var e struct {
+			ID           int       `json:"id"`
+			Title        string    `json:"title"`
+			Description  string    `json:"description"`
+			VendorID     int       `json:"vendor_id"`
+			StartDate    time.Time `json:"start_date"`
+			EndDate      time.Time `json:"end_date"`
+			Status       string    `json:"status"`
+			CreatedAt    time.Time `json:"created_at"`
+			UpdatedAt    time.Time `json:"updated_at"`
+			Picture      string    `json:"picture"`
+			MaxAttendees int       `json:"maxattendees"`
+			Location     string    `json:"location"`
+			Attendees    int       `json:"attendees"`
+		}
+		err := rows.Scan(
+			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt,
+			&e.Picture, &e.MaxAttendees, &e.Location, &e.Attendees,
+		)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
-		events = append(events, e)
+		events = append(events, Event{
+			ID:           e.ID,
+			Title:        e.Title,
+			Description:  e.Description,
+			VendorID:     e.VendorID,
+			StartDate:    e.StartDate,
+			EndDate:      e.EndDate,
+			Status:       e.Status,
+			CreatedAt:    e.CreatedAt,
+			UpdatedAt:    e.UpdatedAt,
+			Picture:      e.Picture,
+			MaxAttendees: e.MaxAttendees,
+			Location:     e.Location,
+			Attendees:    e.Attendees,
+		})
 	}
 
 	return c.JSON(http.StatusOK, events)
@@ -258,12 +289,13 @@ func getEventsByWalletAddressHandler(c echo.Context) error {
 		SELECT 
 			e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date, 
 			e.status, e.created_at, e.updated_at, e.picture, e.maxattendees, e.location,
+			e.requirements, e.agenda,
 			COUNT(a2.id) as attendees
 		FROM events e
 		INNER JOIN attendance a ON a.event_id = e.id
 		LEFT JOIN attendance a2 ON a2.event_id = e.id AND a2.attendance_status = 'present'
 		WHERE a.user_id = $1
-		GROUP BY e.id
+		GROUP BY e.id, e.requirements, e.agenda
 		ORDER BY e.start_date ASC
 	`, userID)
 	if err != nil {
@@ -274,7 +306,10 @@ func getEventsByWalletAddressHandler(c echo.Context) error {
 	var events []Event
 	for rows.Next() {
 		var e Event
-		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location, &e.Attendees)
+		err := rows.Scan(
+			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt,
+			&e.Picture, &e.MaxAttendees, &e.Location, &e.Requirements, &e.Agenda, &e.Attendees,
+		)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
