@@ -417,6 +417,10 @@ func createEventHandler(c echo.Context) error {
 	status := c.FormValue("status")
 	maxAttendeesStr := c.FormValue("maxattendees")
 
+	// Parse requirements and agenda as string from form
+	requirementsStr := c.FormValue("requirements")
+	agendaStr := c.FormValue("agenda")
+
 	if title == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "title is required"})
 	}
@@ -448,6 +452,8 @@ func createEventHandler(c echo.Context) error {
 	fmt.Println("EndDateStr:", endDateStr)
 	fmt.Println("Status:", status)
 	fmt.Println("MaxAttendeesStr:", maxAttendeesStr)
+	fmt.Println("RequirementsStr:", requirementsStr)
+	fmt.Println("AgendaStr:", agendaStr)
 	filename := fmt.Sprintf("uploads/%d_%s", time.Now().Unix(), file.Filename)
 
 	src, err := file.Open()
@@ -486,7 +492,21 @@ func createEventHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "start_date must be before end_date"})
 	}
 
-	// Only populate the fields present in the DB insert (no requirements/agenda)
+	// Parse requirementsStr and agendaStr as JSON
+	var requirementsJSON json.RawMessage
+	if requirementsStr != "" {
+		if err := json.Unmarshal([]byte(requirementsStr), &requirementsJSON); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid requirements JSON"})
+		}
+	}
+	var agendaJSON json.RawMessage
+	if agendaStr != "" {
+		if err := json.Unmarshal([]byte(agendaStr), &agendaJSON); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid agenda JSON"})
+		}
+	}
+
+	// Only populate the fields present in the DB insert (with requirements/agenda)
 	var event struct {
 		ID           int       `json:"id"`
 		Title        string    `json:"title"`
@@ -510,10 +530,11 @@ func createEventHandler(c echo.Context) error {
 	event.Picture = filename
 	event.MaxAttendees = maxAttendees
 
-	// Use the old working query (no requirements/agenda)
+	// Updated query with requirements and agenda
 	query := `
-	    INSERT INTO events (title, description, vendor_id, start_date, end_date, status, picture, maxattendees)
-	    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	    INSERT INTO events (
+			title, description, vendor_id, start_date, end_date, status, picture, maxattendees, requirements, agenda
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 	    RETURNING id, created_at, updated_at
 	`
 
@@ -526,6 +547,8 @@ func createEventHandler(c echo.Context) error {
 		status,
 		filename,
 		maxAttendees,
+		requirementsJSON,
+		agendaJSON,
 	)
 
 	fmt.Println("QueryRow executed, now scanning result...")
