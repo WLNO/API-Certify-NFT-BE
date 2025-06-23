@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,19 +17,21 @@ import (
 )
 
 type Event struct {
-	ID           int       `json:"id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	VendorID     int       `json:"vendor_id"`
-	StartDate    time.Time `json:"start_date"`
-	EndDate      time.Time `json:"end_date"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Picture      string    `json:"picture"`
-	MaxAttendees int       `json:"maxattendees"`
-	Location     string    `json:"location"`
-	Attendees    int       `json:"attendees"`
+	ID           int             `json:"id"`
+	Title        string          `json:"title"`
+	Description  string          `json:"description"`
+	VendorID     int             `json:"vendor_id"`
+	StartDate    time.Time       `json:"start_date"`
+	EndDate      time.Time       `json:"end_date"`
+	Status       string          `json:"status"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+	Picture      string          `json:"picture"`
+	MaxAttendees int             `json:"maxattendees"`
+	Location     string          `json:"location"`
+	Attendees    int             `json:"attendees"`
+	Requirements json.RawMessage `json:"requirements"`
+	Agenda       json.RawMessage `json:"agenda"`
 }
 
 type User struct {
@@ -202,6 +205,7 @@ func main() {
 	e.GET("/api/users/:walletAddress/events", getEventsByWalletAddressHandler)
 	e.GET("/api/users/:walletAddress/certificate", getCertificatesByWalletAddressHandler)
 	e.GET("/api/vendors/:walletAddress/events", getEventsByVendorWalletAddressHandler)
+	e.GET("/api/events/:id", getEventDetailHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -317,6 +321,7 @@ func getEventsByVendorWalletAddressHandler(c echo.Context) error {
 		SELECT 
 			e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date, 
 			e.status, e.created_at, e.updated_at, e.picture, e.maxattendees, e.location,
+			e.requirements, e.agenda,
 			COALESCE(present_count.attendees, 0) as attendees
 		FROM events e
 		LEFT JOIN (
@@ -338,7 +343,10 @@ func getEventsByVendorWalletAddressHandler(c echo.Context) error {
 	var events []Event
 	for rows.Next() {
 		var e Event
-		err := rows.Scan(&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location, &e.Attendees)
+		err := rows.Scan(
+			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt,
+			&e.Picture, &e.MaxAttendees, &e.Location, &e.Requirements, &e.Agenda, &e.Attendees,
+		)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
@@ -432,6 +440,14 @@ func createEventHandler(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "picture file is required"})
 	}
+	fmt.Println("Received create event request:")
+	fmt.Println("Title:", title)
+	fmt.Println("Description:", description)
+	fmt.Println("VendorIDStr:", vendorIDStr)
+	fmt.Println("StartDateStr:", startDateStr)
+	fmt.Println("EndDateStr:", endDateStr)
+	fmt.Println("Status:", status)
+	fmt.Println("MaxAttendeesStr:", maxAttendeesStr)
 	filename := fmt.Sprintf("uploads/%d_%s", time.Now().Unix(), file.Filename)
 
 	src, err := file.Open()
@@ -453,7 +469,7 @@ func createEventHandler(c echo.Context) error {
 	vendorID, err := strconv.Atoi(vendorIDStr)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_id must be a number"})
-	}	
+	}
 	maxAttendees, err := strconv.Atoi(maxAttendeesStr)
 	if err != nil || maxAttendees <= 0 {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "maxattendees must be a positive number"})
@@ -470,13 +486,21 @@ func createEventHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "start_date must be before end_date"})
 	}
 
-	query := `
-		INSERT INTO events (title, description, vendor_id, start_date, end_date, status, picture, maxattendees)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, created_at, updated_at
-	`
+	// Only populate the fields present in the DB insert (no requirements/agenda)
+	var event struct {
+		ID           int       `json:"id"`
+		Title        string    `json:"title"`
+		Description  string    `json:"description"`
+		VendorID     int       `json:"vendor_id"`
+		StartDate    time.Time `json:"start_date"`
+		EndDate      time.Time `json:"end_date"`
+		Status       string    `json:"status"`
+		CreatedAt    time.Time `json:"created_at"`
+		UpdatedAt    time.Time `json:"updated_at"`
+		Picture      string    `json:"picture"`
+		MaxAttendees int       `json:"maxattendees"`
+	}
 
-	var event Event
 	event.Title = title
 	event.Description = description
 	event.VendorID = vendorID
@@ -486,21 +510,73 @@ func createEventHandler(c echo.Context) error {
 	event.Picture = filename
 	event.MaxAttendees = maxAttendees
 
-	err = db.QueryRow(
-		query,
-		event.Title,
-		event.Description,
-		event.VendorID,
-		event.StartDate,
-		event.EndDate,
-		event.Status,
-		event.Picture,
-		event.MaxAttendees,
-	).Scan(&event.ID, &event.CreatedAt, &event.UpdatedAt)
+	// Use the old working query (no requirements/agenda)
+	query := `
+	    INSERT INTO events (title, description, vendor_id, start_date, end_date, status, picture, maxattendees)
+	    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	    RETURNING id, created_at, updated_at
+	`
 
+	row := db.QueryRow(query,
+		title,
+		description,
+		vendorID,
+		startDate,
+		endDate,
+		status,
+		filename,
+		maxAttendees,
+	)
+
+	fmt.Println("QueryRow executed, now scanning result...")
+
+	err = row.Scan(&event.ID, &event.CreatedAt, &event.UpdatedAt)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		fmt.Println("DB Scan failed:", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB scan failed", "details": err.Error()})
 	}
 
 	return c.JSON(http.StatusCreated, event)
+}
+
+// Handler to get event detail by ID
+func getEventDetailHandler(c echo.Context) error {
+	id := c.Param("id")
+	if id == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event ID is required"})
+	}
+
+	query := `
+      SELECT 
+        e.id, e.title, e.description, e.vendor_id, v.vendor_name,
+        e.start_date, e.end_date, e.status, e.created_at, e.updated_at,
+        e.picture, e.maxattendees, e.location, e.requirements, e.agenda,
+        COUNT(a.id) as attendees
+      FROM events e
+      LEFT JOIN vendors v ON e.vendor_id = v.id
+      LEFT JOIN attendance a ON a.event_id = e.id AND a.attendance_status = 'present'
+      WHERE e.id = $1
+      GROUP BY e.id, v.vendor_name
+    `
+	row := db.QueryRow(query, id)
+
+	var event struct {
+		Event
+		Organizer string `json:"organizer"`
+	}
+
+	err := row.Scan(
+		&event.ID, &event.Title, &event.Description, &event.VendorID, &event.Organizer,
+		&event.StartDate, &event.EndDate, &event.Status, &event.CreatedAt, &event.UpdatedAt,
+		&event.Picture, &event.MaxAttendees, &event.Location, &event.Requirements, &event.Agenda,
+		&event.Attendees,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "event not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, event)
 }
