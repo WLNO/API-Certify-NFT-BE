@@ -206,6 +206,7 @@ func main() {
 	e.GET("/api/users/:walletAddress/certificate", getCertificatesByWalletAddressHandler)
 	e.GET("/api/vendors/:walletAddress/events", getEventsByVendorWalletAddressHandler)
 	e.GET("/api/events/:id", getEventDetailHandler)
+	e.POST("/api/users/whitelist", whitelistHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -451,6 +452,7 @@ func createEventHandler(c echo.Context) error {
 	endDateStr := c.FormValue("end_date")
 	status := c.FormValue("status")
 	maxAttendeesStr := c.FormValue("maxattendees")
+	locationStr := c.FormValue("location")
 
 	// Parse requirements and agenda as string from form
 	requirementsStr := c.FormValue("requirements")
@@ -541,49 +543,42 @@ func createEventHandler(c echo.Context) error {
 		}
 	}
 
-	// Only populate the fields present in the DB insert (with requirements/agenda)
-	var event struct {
-		ID           int       `json:"id"`
-		Title        string    `json:"title"`
-		Description  string    `json:"description"`
-		VendorID     int       `json:"vendor_id"`
-		StartDate    time.Time `json:"start_date"`
-		EndDate      time.Time `json:"end_date"`
-		Status       string    `json:"status"`
-		CreatedAt    time.Time `json:"created_at"`
-		UpdatedAt    time.Time `json:"updated_at"`
-		Picture      string    `json:"picture"`
-		MaxAttendees int       `json:"maxattendees"`
+	// Use Event struct and fill all properties including Location, Requirements, Agenda
+	event := Event{
+		Title:        title,
+		Description:  description,
+		VendorID:     vendorID,
+		StartDate:    startDate,
+		EndDate:      endDate,
+		Status:       status,
+		Picture:      filename,
+		MaxAttendees: maxAttendees,
+		Location:     locationStr,
+		Requirements: requirementsJSON,
+		Agenda:       agendaJSON,
 	}
 
-	event.Title = title
-	event.Description = description
-	event.VendorID = vendorID
-	event.StartDate = startDate
-	event.EndDate = endDate
-	event.Status = status
-	event.Picture = filename
-	event.MaxAttendees = maxAttendees
-
-	// Updated query with requirements and agenda
+	// Updated query with requirements, agenda, and location
 	query := `
 	    INSERT INTO events (
-			title, description, vendor_id, start_date, end_date, status, picture, maxattendees, requirements, agenda
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			title, description, vendor_id, start_date, end_date,
+			status, picture, maxattendees, location, requirements, agenda
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 	    RETURNING id, created_at, updated_at
 	`
 
 	row := db.QueryRow(query,
-		title,
-		description,
-		vendorID,
-		startDate,
-		endDate,
-		status,
-		filename,
-		maxAttendees,
-		requirementsJSON,
-		agendaJSON,
+		event.Title,
+		event.Description,
+		event.VendorID,
+		event.StartDate,
+		event.EndDate,
+		event.Status,
+		event.Picture,
+		event.MaxAttendees,
+		event.Location,
+		event.Requirements,
+		event.Agenda,
 	)
 
 	fmt.Println("QueryRow executed, now scanning result...")
@@ -637,4 +632,51 @@ func getEventDetailHandler(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, event)
+}
+
+func whitelistHandler(c echo.Context) error {
+	var body struct {
+		EventID       int    `json:"event_id"`
+		WalletAddress string `json:"wallet_address"`
+	}
+
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+
+	if body.EventID == 0 || body.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_id and wallet_address are required"})
+	}
+
+	var userID int
+	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, body.WalletAddress).Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	query := `
+        INSERT INTO whitelist (event_id, user_id, wallet_address, status)
+        VALUES ($1, $2, $3, 'pending')
+        RETURNING id, created_at, updated_at
+    `
+
+	var id int
+	var createdAt, updatedAt time.Time
+	err = db.QueryRow(query, body.EventID, userID, body.WalletAddress).Scan(&id, &createdAt, &updatedAt)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusCreated, map[string]interface{}{
+		"id":             id,
+		"event_id":       body.EventID,
+		"user_id":        userID,
+		"wallet_address": body.WalletAddress,
+		"status":         "pending",
+		"created_at":     createdAt,
+		"updated_at":     updatedAt,
+	})
 }
