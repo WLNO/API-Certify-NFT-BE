@@ -317,31 +317,62 @@ func getEventsByWalletAddressHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	rows, err := db.Query(`
+	query := `
 		SELECT 
 			e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date, 
 			e.status, e.created_at, e.updated_at, e.picture, e.maxattendees, e.location,
 			e.requirements, e.agenda,
-			COUNT(a2.id) as attendees
+			COALESCE(attend_count.attendees, 0) as attendees,
+			user_status.status
 		FROM events e
-		INNER JOIN attendance a ON a.event_id = e.id
-		LEFT JOIN attendance a2 ON a2.event_id = e.id AND a2.attendance_status = 'present'
-		WHERE a.user_id = $1
-		GROUP BY e.id, e.requirements, e.agenda
+		JOIN (
+			SELECT event_id, 'present' as status FROM attendance WHERE user_id = $1
+			UNION
+			SELECT event_id, 'whitelisted' as status FROM whitelist WHERE user_id = $1
+		) AS user_status ON e.id = user_status.event_id
+		LEFT JOIN (
+			SELECT event_id, COUNT(*) as attendees
+			FROM attendance
+			WHERE attendance_status = 'present'
+			GROUP BY event_id
+		) AS attend_count ON e.id = attend_count.event_id
 		ORDER BY e.start_date ASC
-	`, userID)
+	`
+
+	rows, err := db.Query(query, userID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	defer rows.Close()
 
-	var events []Event
+	type EventResponse struct {
+		ID           int             `json:"id"`
+		Title        string          `json:"title"`
+		Description  string          `json:"description"`
+		VendorID     int             `json:"vendor_id"`
+		StartDate    time.Time       `json:"start_date"`
+		EndDate      time.Time       `json:"end_date"`
+		Status       string          `json:"status"`
+		CreatedAt    time.Time       `json:"created_at"`
+		UpdatedAt    time.Time       `json:"updated_at"`
+		Picture      string          `json:"picture"`
+		MaxAttendees int             `json:"maxattendees"`
+		Location     string          `json:"location"`
+		Attendees    int             `json:"attendees"`
+		UserStatus   string          `json:"user_status"`
+		Requirements json.RawMessage `json:"requirements,omitempty"`
+		Agenda       json.RawMessage `json:"agenda,omitempty"`
+	}
+
+	var events []EventResponse
 	for rows.Next() {
-		var e Event
-		err := rows.Scan(
-			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt,
-			&e.Picture, &e.MaxAttendees, &e.Location, &e.Requirements, &e.Agenda, &e.Attendees,
-		)
+		var e EventResponse
+	err := rows.Scan(
+		&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status,
+		&e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location,
+		&e.Requirements, &e.Agenda, new(interface{}), // abaikan kolom `attendees` yang tidak dipakai
+		&e.UserStatus,
+	)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
