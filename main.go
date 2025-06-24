@@ -208,8 +208,47 @@ func main() {
 	e.GET("/api/vendors/:walletAddress/events", getEventsByVendorWalletAddressHandler)
 	e.GET("/api/events/:id", getEventDetailHandler)
 	e.POST("/api/users/whitelist", createWhitelistHandler)
+	e.POST("/api/users/whitelist/cancel", cancelWhitelistHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
+}
+
+// Handler to cancel whitelist entry
+func cancelWhitelistHandler(c echo.Context) error {
+	var payload struct {
+		EventID       int    `json:"event_id"`
+		WalletAddress string `json:"wallet_address"`
+	}
+	if err := c.Bind(&payload); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request payload"})
+	}
+
+	if payload.EventID == 0 || payload.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_id and wallet_address are required"})
+	}
+
+	// Get user_id from wallet_address
+	var userID int
+	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, payload.WalletAddress).Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	// Delete the whitelist entry
+	result, err := db.Exec(`DELETE FROM whitelist WHERE event_id = $1 AND user_id = $2`, payload.EventID, userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to cancel whitelist"})
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "whitelist entry not found"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Whitelist cancelled successfully"})
 }
 
 func getEventsHandler(c echo.Context) error {
