@@ -857,6 +857,29 @@ func cancelEventHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Event ID is required"})
 	}
 
+	// Cek apakah event sudah berstatus canceled
+	var currentStatus string
+	err := db.QueryRow(`SELECT status FROM events WHERE id = $1`, id).Scan(&currentStatus)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{
+				"error":   "Event not found",
+				"message": "No event with the provided ID exists.",
+			})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error":   "Failed to check event status",
+			"message": "An error occurred while checking the event status.",
+		})
+	}
+
+	if currentStatus == "canceled" {
+		return c.JSON(http.StatusConflict, map[string]string{
+			"message": "Event is already canceled",
+		})
+	}
+
+	// Update status menjadi 'canceled'
 	result, err := db.Exec(`UPDATE events SET status = 'canceled' WHERE id = $1`, id)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{
@@ -879,5 +902,7 @@ func cancelEventHandler(c echo.Context) error {
 		})
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{"message": "Event successfully canceled"})
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "Event successfully canceled",
+	})
 }
