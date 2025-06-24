@@ -19,6 +19,7 @@ Currently, the API uses wallet address-based authentication. Users and vendors a
 - **`POST /api/users/register`**: Registers a new user account.
 - **`GET /api/users/:walletAddress/events`**: Retrieves all events for a specific user.
 - **`GET /api/users/:walletAddress/certificate`**: Retrieves all certificates for a specific user.
+- **`POST /api/users/whitelist`**: Creates a whitelist entry for an event.
 
 ### Vendors
 - **`POST /api/vendors/register`**: Registers a new vendor account.
@@ -27,6 +28,7 @@ Currently, the API uses wallet address-based authentication. Users and vendors a
 ### Events
 - **`GET /api/events/all`**: Retrieves all events.
 - **`POST /api/events/create`**: Creates a new event.
+- **`GET /api/events/:id`**: Retrieves detailed information about a specific event.
 
 ---
 
@@ -200,12 +202,21 @@ Returns an array of `Event` objects.
     "picture": "uploads/1718000000_event.jpg",
     "maxattendees": 100,
     "location": "Jakarta Convention Center",
-    "attendees": 25
+    "attendees": 25,
+    "requirements": {"items": ["Laptop", "Notebook"]},
+    "agenda": {"sessions": [{"time": "09:00", "topic": "Introduction"}]}
   }
 ]
 ```
 
 **Error Responses**
+
+**400 Bad Request - Missing Wallet Address**
+```json
+{
+  "error": "walletAddress is required"
+}
+```
 
 **404 Not Found**
 ```json
@@ -258,6 +269,13 @@ Returns an array of `CertificateWithEvent` objects.
 
 **Error Responses**
 
+**400 Bad Request - Missing Wallet Address**
+```json
+{
+  "error": "walletAddress is required"
+}
+```
+
 **404 Not Found**
 ```json
 {
@@ -274,9 +292,108 @@ Returns an array of `CertificateWithEvent` objects.
 
 ---
 
+#### 5. Create Whitelist Entry
+**POST** `/api/users/whitelist`
+
+Creates a whitelist entry for a user to attend an event. The system automatically determines if the user gets approved or pending status based on available quota.
+
+#### Request
+**Content-Type:** `application/json`
+
+```json
+{
+  "event_id": 1,
+  "wallet_address": "0x1234567890abcdef..."
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| event_id | integer | Yes | ID of the event to register for |
+| wallet_address | string | Yes | User's wallet address |
+
+#### Response
+**Success (201 Created) - Approved**
+```json
+{
+  "message": "Whitelist successful! You are registered as an event participant.",
+  "data": {
+    "id": 1,
+    "event_id": 1,
+    "user_id": 5,
+    "wallet_address": "0x1234567890abcdef...",
+    "status": "approved",
+    "created_at": "2024-06-10T10:00:00Z",
+    "updated_at": "2024-06-10T10:00:00Z"
+  }
+}
+```
+
+**Success (201 Created) - Pending (Quota Full)**
+```json
+{
+  "message": "Whitelist successful, but quota is full. You are on the waiting list.",
+  "data": {
+    "id": 2,
+    "event_id": 1,
+    "user_id": 6,
+    "wallet_address": "0xabcdef1234567890...",
+    "status": "pending",
+    "created_at": "2024-06-10T10:00:00Z",
+    "updated_at": "2024-06-10T10:00:00Z"
+  }
+}
+```
+
+**Error Responses**
+
+**400 Bad Request - Invalid Request**
+```json
+{
+  "error": "Invalid request body"
+}
+```
+
+**400 Bad Request - Missing Required Fields**
+```json
+{
+  "error": "event_id and wallet_address are required"
+}
+```
+
+**404 Not Found - User Not Found**
+```json
+{
+  "error": "Wallet address is not registered as a user"
+}
+```
+
+**404 Not Found - Event Not Found**
+```json
+{
+  "error": "Event not found"
+}
+```
+
+**409 Conflict - Already Registered**
+```json
+{
+  "error": "You have already registered for this event"
+}
+```
+
+**500 Internal Server Error**
+```json
+{
+  "error": "Failed to find user"
+}
+```
+
+---
+
 ### Vendors
 
-#### 5. Register Vendor
+#### 6. Register Vendor
 **POST** `/api/vendors/register`
 
 Registers a new vendor account.
@@ -346,7 +463,7 @@ Registers a new vendor account.
 
 ---
 
-#### 6. Get Events by Vendor
+#### 7. Get Events by Vendor
 **GET** `/api/vendors/:walletAddress/events`
 
 Retrieves all events created by a specific vendor, based on their wallet address.
@@ -374,12 +491,21 @@ Returns an array of `Event` objects.
     "picture": "uploads/1718000000_event.jpg",
     "maxattendees": 100,
     "location": "Jakarta Convention Center",
-    "attendees": 25
+    "attendees": 25,
+    "requirements": {"items": ["Laptop", "Notebook"]},
+    "agenda": {"sessions": [{"time": "09:00", "topic": "Introduction"}]}
   }
 ]
 ```
 
 **Error Responses**
+
+**400 Bad Request - Missing Wallet Address**
+```json
+{
+  "error": "walletAddress is required"
+}
+```
 
 **404 Not Found**
 ```json
@@ -399,7 +525,7 @@ Returns an array of `Event` objects.
 
 ### Events
 
-#### 7. Get All Events
+#### 8. Get All Events
 **GET** `/api/events/all`
 
 Retrieves all events with attendee count.
@@ -435,7 +561,7 @@ Retrieves all events with attendee count.
 
 ---
 
-#### 8. Create Event
+#### 9. Create Event
 **POST** `/api/events/create`
 
 Creates a new event. Requires multipart form data.
@@ -452,6 +578,9 @@ Creates a new event. Requires multipart form data.
 | end_date | string | Yes | End date in RFC3339 format (e.g., "2024-06-15T17:00:00Z") |
 | status | string | Yes | Event status (e.g., "upcoming", "ongoing", "completed") |
 | maxattendees | integer | Yes | Maximum number of attendees |
+| location | string | No | Event location |
+| requirements | string | No | JSON string containing event requirements |
+| agenda | string | No | JSON string containing event agenda |
 | picture | file | Yes | Event image file |
 
 #### Response
@@ -469,8 +598,10 @@ Creates a new event. Requires multipart form data.
   "updated_at": "2024-06-10T10:00:00Z",
   "picture": "uploads/1718000000_event.jpg",
   "maxattendees": 100,
-  "location": "",
-  "attendees": 0
+  "location": "Jakarta Convention Center",
+  "attendees": 0,
+  "requirements": {"items": ["Laptop", "Notebook"]},
+  "agenda": {"sessions": [{"time": "09:00", "topic": "Introduction"}]}
 }
 ```
 
@@ -518,6 +649,13 @@ Creates a new event. Requires multipart form data.
 }
 ```
 
+**400 Bad Request - Invalid JSON**
+```json
+{
+  "error": "invalid requirements JSON"
+}
+```
+
 **500 Internal Server Error - File Upload Issues**
 ```json
 {
@@ -526,6 +664,64 @@ Creates a new event. Requires multipart form data.
 ```
 
 **500 Internal Server Error - Database Issues**
+```json
+{
+  "error": "DB scan failed"
+}
+```
+
+---
+
+#### 10. Get Event Detail
+**GET** `/api/events/:id`
+
+Retrieves detailed information about a specific event, including organizer information.
+
+#### Path Parameters
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| id | integer | Yes | The event ID |
+
+#### Response
+**Success (200 OK)**
+```json
+{
+  "id": 1,
+  "title": "NFT Conference 2024",
+  "description": "Annual NFT conference",
+  "vendor_id": 1,
+  "start_date": "2024-06-15T09:00:00Z",
+  "end_date": "2024-06-15T17:00:00Z",
+  "status": "upcoming",
+  "created_at": "2024-06-10T10:00:00Z",
+  "updated_at": "2024-06-10T10:00:00Z",
+  "picture": "uploads/1718000000_event.jpg",
+  "maxattendees": 100,
+  "location": "Jakarta Convention Center",
+  "attendees": 25,
+  "requirements": {"items": ["Laptop", "Notebook"]},
+  "agenda": {"sessions": [{"time": "09:00", "topic": "Introduction"}]},
+  "organizer": "NFT Events Co."
+}
+```
+
+**Error Responses**
+
+**400 Bad Request - Missing Event ID**
+```json
+{
+  "error": "event ID is required"
+}
+```
+
+**404 Not Found**
+```json
+{
+  "error": "event not found"
+}
+```
+
+**500 Internal Server Error**
 ```json
 {
   "error": "database error message"
@@ -551,7 +747,9 @@ Creates a new event. Requires multipart form data.
   "picture": "string (file path)",
   "maxattendees": "integer",
   "location": "string",
-  "attendees": "integer"
+  "attendees": "integer",
+  "requirements": "json (optional)",
+  "agenda": "json (optional)"
 }
 ```
 
@@ -599,6 +797,19 @@ Creates a new event. Requires multipart form data.
 }
 ```
 
+### Whitelist Entry
+```json
+{
+  "id": "integer",
+  "event_id": "integer",
+  "user_id": "integer",
+  "wallet_address": "string",
+  "status": "string (approved|pending)",
+  "created_at": "datetime (RFC3339)",
+  "updated_at": "datetime (RFC3339)"
+}
+```
+
 ---
 
 ## Error Handling
@@ -608,7 +819,8 @@ All endpoints return appropriate HTTP status codes:
 - **200 OK**: Successful GET requests
 - **201 Created**: Successful POST requests that create resources
 - **400 Bad Request**: Invalid input data
-- **409 Conflict**: Resource already exists (e.g., duplicate wallet address)
+- **404 Not Found**: Resource not found
+- **409 Conflict**: Resource already exists (e.g., duplicate wallet address, already registered for event)
 - **500 Internal Server Error**: Server-side errors
 
 Error responses follow this format:
@@ -640,10 +852,25 @@ Example: `uploads/1718000000_event_banner.jpg`
 
 ---
 
+## Whitelist System
+
+The whitelist system automatically manages event registration:
+
+1. **Quota Check**: When a user registers for an event, the system checks if there are available spots
+2. **Status Assignment**: 
+   - `approved`: User gets a confirmed spot if quota is available
+   - `pending`: User is placed on waiting list if quota is full
+3. **Duplicate Prevention**: Users cannot register for the same event multiple times
+4. **User Validation**: Only registered users can create whitelist entries
+
+---
+
 ## Notes
 
 1. **Wallet Address Uniqueness**: Wallet addresses must be unique across both users and vendors tables.
 2. **Date Format**: All dates should be in RFC3339 format (ISO 8601).
 3. **File Upload**: Only image files are supported for event pictures.
 4. **Database**: The API uses PostgreSQL as the database backend.
-5. **Environment**: Configuration is loaded from `.env` file. 
+5. **Environment**: Configuration is loaded from `.env` file.
+6. **JSON Fields**: Requirements and agenda fields accept JSON strings that are validated before storage.
+7. **Whitelist Logic**: The system automatically determines whitelist status based on event capacity. 
