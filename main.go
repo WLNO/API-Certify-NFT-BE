@@ -602,7 +602,7 @@ func getEventDetailHandler(c echo.Context) error {
 
 	query := `
       SELECT 
-        e.id, e.title, e.description, e.vendor_id, v.vendor_name,
+        e.id, v.vendor_name, e.title, e.description, e.vendor_id,
         e.start_date, e.end_date, e.status, e.created_at, e.updated_at,
         e.picture, e.maxattendees, e.location, e.requirements, e.agenda,
         COUNT(a.id) as attendees
@@ -614,16 +614,30 @@ func getEventDetailHandler(c echo.Context) error {
     `
 	row := db.QueryRow(query, id)
 
-	var event struct {
-		Event
-		Organizer string `json:"organizer"`
+	var dbEvent struct {
+		ID           int
+		Organizer    sql.NullString
+		Title        string
+		Description  string
+		VendorID     int
+		StartDate    time.Time
+		EndDate      time.Time
+		Status       string
+		CreatedAt    time.Time
+		UpdatedAt    time.Time
+		Picture      string
+		MaxAttendees int
+		Location     string
+		Requirements json.RawMessage
+		Agenda       json.RawMessage
+		Attendees    int
 	}
 
 	err := row.Scan(
-		&event.ID, &event.Title, &event.Description, &event.VendorID, &event.Organizer,
-		&event.StartDate, &event.EndDate, &event.Status, &event.CreatedAt, &event.UpdatedAt,
-		&event.Picture, &event.MaxAttendees, &event.Location, &event.Requirements, &event.Agenda,
-		&event.Attendees,
+		&dbEvent.ID, &dbEvent.Organizer, &dbEvent.Title, &dbEvent.Description, &dbEvent.VendorID,
+		&dbEvent.StartDate, &dbEvent.EndDate, &dbEvent.Status, &dbEvent.CreatedAt, &dbEvent.UpdatedAt,
+		&dbEvent.Picture, &dbEvent.MaxAttendees, &dbEvent.Location, &dbEvent.Requirements, &dbEvent.Agenda,
+		&dbEvent.Attendees,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -632,7 +646,48 @@ func getEventDetailHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	return c.JSON(http.StatusOK, event)
+	type EventDetailResponse struct {
+		ID           int             `json:"id"`
+		Organizer    *string         `json:"organizer"`
+		Title        string          `json:"title"`
+		Description  string          `json:"description"`
+		VendorID     int             `json:"vendor_id"`
+		StartDate    time.Time       `json:"start_date"`
+		EndDate      time.Time       `json:"end_date"`
+		Status       string          `json:"status"`
+		CreatedAt    time.Time       `json:"created_at"`
+		UpdatedAt    time.Time       `json:"updated_at"`
+		Picture      string          `json:"picture"`
+		MaxAttendees int             `json:"maxattendees"`
+		Location     string          `json:"location"`
+		Requirements json.RawMessage `json:"requirements,omitempty"`
+		Agenda       json.RawMessage `json:"agenda,omitempty"`
+		Attendees    int             `json:"attendees"`
+	}
+
+	response := EventDetailResponse{
+		ID:           dbEvent.ID,
+		Title:        dbEvent.Title,
+		Description:  dbEvent.Description,
+		VendorID:     dbEvent.VendorID,
+		StartDate:    dbEvent.StartDate,
+		EndDate:      dbEvent.EndDate,
+		Status:       dbEvent.Status,
+		CreatedAt:    dbEvent.CreatedAt,
+		UpdatedAt:    dbEvent.UpdatedAt,
+		Picture:      dbEvent.Picture,
+		MaxAttendees: dbEvent.MaxAttendees,
+		Location:     dbEvent.Location,
+		Requirements: dbEvent.Requirements,
+		Agenda:       dbEvent.Agenda,
+		Attendees:    dbEvent.Attendees,
+	}
+
+	if dbEvent.Organizer.Valid {
+		response.Organizer = &dbEvent.Organizer.String
+	}
+
+	return c.JSON(http.StatusOK, response)
 }
 
 func createWhitelistHandler(c echo.Context) error {
