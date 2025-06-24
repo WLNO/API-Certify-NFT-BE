@@ -209,6 +209,7 @@ func main() {
 	e.GET("/api/events/:id", getEventDetailHandler)
 	e.POST("/api/users/whitelist", createWhitelistHandler)
 	e.POST("/api/users/whitelist/cancel", cancelWhitelistHandler)
+	e.DELETE("/api/events/delete/:id", deleteEventHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -836,4 +837,26 @@ func createWhitelistHandler(c echo.Context) error {
 			"updated_at":     updatedAt,
 		},
 	})
+}
+
+func deleteEventHandler(c echo.Context) error {
+	id := c.Param("id")
+	if id == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event ID is required"})
+	}
+
+	result, err := db.Exec(`DELETE FROM events WHERE id = $1`, id)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to delete event", "details": err.Error()})
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "could not determine affected rows"})
+	}
+	if rowsAffected == 0 {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "event not found"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "event deleted successfully"})
 }
