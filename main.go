@@ -318,24 +318,25 @@ func getEventsByWalletAddressHandler(c echo.Context) error {
 	}
 
 	query := `
-		SELECT 
-			e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date, 
+		SELECT
+			e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date,
 			e.status, e.created_at, e.updated_at, e.picture, e.maxattendees, e.location,
 			e.requirements, e.agenda,
 			COALESCE(attend_count.attendees, 0) as attendees,
-			user_status.status
+			CASE
+				WHEN att.attendance_status = 'present' THEN 'present'
+				ELSE wl.status
+			END as user_status
 		FROM events e
-		JOIN (
-			SELECT event_id, 'present' as status FROM attendance WHERE user_id = $1
-			UNION
-			SELECT event_id, 'whitelisted' as status FROM whitelist WHERE user_id = $1
-		) AS user_status ON e.id = user_status.event_id
+		LEFT JOIN attendance att ON e.id = att.event_id AND att.user_id = $1
+		LEFT JOIN whitelist wl ON e.id = wl.event_id AND wl.user_id = $1
 		LEFT JOIN (
 			SELECT event_id, COUNT(*) as attendees
 			FROM attendance
 			WHERE attendance_status = 'present'
 			GROUP BY event_id
 		) AS attend_count ON e.id = attend_count.event_id
+		WHERE att.user_id IS NOT NULL OR wl.user_id IS NOT NULL
 		ORDER BY e.start_date ASC
 	`
 
