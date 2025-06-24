@@ -1,7 +1,7 @@
 -- Users
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
-    email VARCHAR(255),
+    email VARCHAR(255) NOT NULL,
     wallet_address VARCHAR(255) UNIQUE,
     name VARCHAR(255) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
