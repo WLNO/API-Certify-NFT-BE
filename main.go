@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -206,7 +207,7 @@ func main() {
 	e.GET("/api/users/:walletAddress/certificate", getCertificatesByWalletAddressHandler)
 	e.GET("/api/vendors/:walletAddress/events", getEventsByVendorWalletAddressHandler)
 	e.GET("/api/events/:id", getEventDetailHandler)
-	e.POST("/api/users/whitelist", whitelistHandler)
+	e.POST("/api/users/whitelist", createWhitelistHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -634,49 +635,79 @@ func getEventDetailHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, event)
 }
 
-func whitelistHandler(c echo.Context) error {
-	var body struct {
+func createWhitelistHandler(c echo.Context) error {
+	var input struct {
 		EventID       int    `json:"event_id"`
 		WalletAddress string `json:"wallet_address"`
 	}
-
-	if err := c.Bind(&body); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	if err := c.Bind(&input); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
 
-	if body.EventID == 0 || body.WalletAddress == "" {
+	if input.EventID == 0 || input.WalletAddress == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_id and wallet_address are required"})
 	}
 
+	// Get user_id based on wallet_address
 	var userID int
-	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, body.WalletAddress).Scan(&userID)
+	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, input.WalletAddress).Scan(&userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Wallet address is not registered as a user"})
 		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to find user"})
 	}
 
-	query := `
-        INSERT INTO whitelist (event_id, user_id, wallet_address, status)
-        VALUES ($1, $2, $3, 'pending')
-        RETURNING id, created_at, updated_at
-    `
-
-	var id int
-	var createdAt, updatedAt time.Time
-	err = db.QueryRow(query, body.EventID, userID, body.WalletAddress).Scan(&id, &createdAt, &updatedAt)
+	// Get maxAttendees quota from event
+	var maxAttendees int
+	err = db.QueryRow(`SELECT maxattendees FROM events WHERE id = $1`, input.EventID).Scan(&maxAttendees)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Event not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to read event data"})
+	}
+
+	// Count approved whitelist entries
+	var approvedCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM whitelist WHERE event_id = $1 AND status = 'approved'`, input.EventID).Scan(&approvedCount)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to count whitelist quota"})
+	}
+
+	status := "pending"
+	message := "Whitelist successful, but quota is full. You are on the waiting list."
+	if approvedCount < maxAttendees {
+		status = "approved"
+		message = "Whitelist successful! You are registered as an event participant."
+	}
+
+	// Insert into whitelist
+	var wlID int
+	var createdAt, updatedAt time.Time
+	err = db.QueryRow(`
+		INSERT INTO whitelist (event_id, user_id, wallet_address, status)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at, updated_at
+	`, input.EventID, userID, input.WalletAddress, status).Scan(&wlID, &createdAt, &updatedAt)
+
+	if err != nil {
+		if strings.Contains(err.Error(), "unique") {
+			return c.JSON(http.StatusConflict, map[string]string{"error": "You have already registered for this event"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to register whitelist"})
 	}
 
 	return c.JSON(http.StatusCreated, map[string]interface{}{
-		"id":             id,
-		"event_id":       body.EventID,
-		"user_id":        userID,
-		"wallet_address": body.WalletAddress,
-		"status":         "pending",
-		"created_at":     createdAt,
-		"updated_at":     updatedAt,
+		"message": message,
+		"data": map[string]interface{}{
+			"id":             wlID,
+			"event_id":       input.EventID,
+			"user_id":        userID,
+			"wallet_address": input.WalletAddress,
+			"status":         status,
+			"created_at":     createdAt,
+			"updated_at":     updatedAt,
+		},
 	})
 }
