@@ -367,12 +367,12 @@ func getEventsByWalletAddressHandler(c echo.Context) error {
 	var events []EventResponse
 	for rows.Next() {
 		var e EventResponse
-	err := rows.Scan(
-		&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status,
-		&e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location,
-		&e.Requirements, &e.Agenda, new(interface{}), // abaikan kolom `attendees` yang tidak dipakai
-		&e.UserStatus,
-	)
+		err := rows.Scan(
+			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status,
+			&e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location,
+			&e.Requirements, &e.Agenda, &e.Attendees,
+			&e.UserStatus,
+		)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
