@@ -61,8 +61,8 @@ func registerUserHandler(c echo.Context) error {
 	if err := c.Bind(&u); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
 	}
-	if u.Name == "" || u.WalletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name and wallet_address are required"})
+	if u.Name == "" || u.WalletAddress == "" || u.Email == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name, email, and wallet_address are required"})
 	}
 
 	registered, err := isWalletRegistered(u.WalletAddress)
@@ -210,6 +210,8 @@ func main() {
 	e.POST("/api/users/whitelist", createWhitelistHandler)
 	e.POST("/api/users/whitelist/cancel", cancelWhitelistHandler)
 	e.POST("/api/events/cancel/:id", cancelEventHandler)
+	e.GET("/api/users/:walletAddress", getUserByWalletAddressHandler)
+	e.GET("/api/events/:id/whitelist", getUserByWhitelist)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -905,4 +907,115 @@ func cancelEventHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{
 		"message": "Event successfully canceled",
 	})
+}
+
+func getUserByWalletAddressHandler(c echo.Context) error {
+	walletAddress := c.Param("walletAddress")
+	if walletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Wallet address is required",
+		})
+	}
+
+	query := `
+		SELECT id, email, wallet_address, name, created_at, updated_at
+		FROM users
+		WHERE wallet_address = $1
+	`
+
+	var user struct {
+		ID            int       `json:"id"`
+		Email         *string   `json:"email,omitempty"`
+		WalletAddress string    `json:"wallet_address"`
+		Name          string    `json:"name"`
+		CreatedAt     time.Time `json:"created_at"`
+		UpdatedAt     time.Time `json:"updated_at"`
+	}
+
+	err := db.QueryRow(query, walletAddress).Scan(
+		&user.ID,
+		&user.Email,
+		&user.WalletAddress,
+		&user.Name,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{
+				"error": "User not found",
+			})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error":   "Failed to retrieve user",
+			"details": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, user)
+}
+
+func getUserByWhitelist(c echo.Context) error {
+	eventID := c.Param("id")
+	if eventID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Event ID is required",
+		})
+	}
+
+	query := `
+		SELECT
+			w.id,
+			w.user_id,
+			u.name,
+			u.email,
+			w.wallet_address,
+			w.status,
+			w.created_at
+		FROM whitelist w
+		LEFT JOIN users u ON u.id = w.user_id
+		WHERE w.event_id = $1
+		ORDER BY w.created_at ASC
+	`
+
+	rows, err := db.Query(query, eventID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error":   "Failed to query whitelisted users",
+			"details": err.Error(),
+		})
+	}
+	defer rows.Close()
+
+	type WhitelistedUser struct {
+		ID            int       `json:"id"`
+		UserID        int       `json:"user_id"`
+		Name          string    `json:"name"`
+		Email         string    `json:"email"`
+		WalletAddress string    `json:"wallet_address"`
+		Status        string    `json:"status"`
+		CreatedAt     time.Time `json:"created_at"`
+	}
+
+	var whitelisted []WhitelistedUser
+	for rows.Next() {
+		var w WhitelistedUser
+		if err := rows.Scan(
+			&w.ID,
+			&w.UserID,
+			&w.Name,
+			&w.Email,
+			&w.WalletAddress,
+			&w.Status,
+			&w.CreatedAt,
+		); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{
+				"error":   "Failed to scan row",
+				"details": err.Error(),
+			})
+		}
+		whitelisted = append(whitelisted, w)
+	}
+
+	return c.JSON(http.StatusOK, whitelisted)
 }
