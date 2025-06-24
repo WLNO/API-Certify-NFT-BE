@@ -256,10 +256,11 @@ func getEventsHandler(c echo.Context) error {
     SELECT 
       e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date, 
       e.status, e.created_at, e.updated_at, e.picture, e.maxattendees, e.location,
-      COUNT(a.id) as attendees
+      v.vendor_name,
+      (SELECT COUNT(*) FROM whitelist w WHERE w.event_id = e.id AND w.status = 'approved') as whitelisted
     FROM events e
-    LEFT JOIN attendance a ON a.event_id = e.id AND a.attendance_status = 'present'
-    GROUP BY e.id
+    LEFT JOIN vendors v ON v.id = e.vendor_id
+    GROUP BY e.id, v.vendor_name
     ORDER BY e.start_date ASC
   `)
 	if err != nil {
@@ -267,45 +268,35 @@ func getEventsHandler(c echo.Context) error {
 	}
 	defer rows.Close()
 
-	var events []Event
+	type EventWithOrganizer struct {
+		ID           int       `json:"id"`
+		Title        string    `json:"title"`
+		Description  string    `json:"description"`
+		VendorID     int       `json:"vendor_id"`
+		StartDate    time.Time `json:"start_date"`
+		EndDate      time.Time `json:"end_date"`
+		Status       string    `json:"status"`
+		CreatedAt    time.Time `json:"created_at"`
+		UpdatedAt    time.Time `json:"updated_at"`
+		Picture      string    `json:"picture"`
+		MaxAttendees int       `json:"maxattendees"`
+		Organizer    string    `json:"organizer"`
+		Whitelisted  int       `json:"whitelisted"`
+		Location     string    `json:"location"`
+	}
+
+	var events []EventWithOrganizer
 	for rows.Next() {
-		var e struct {
-			ID           int       `json:"id"`
-			Title        string    `json:"title"`
-			Description  string    `json:"description"`
-			VendorID     int       `json:"vendor_id"`
-			StartDate    time.Time `json:"start_date"`
-			EndDate      time.Time `json:"end_date"`
-			Status       string    `json:"status"`
-			CreatedAt    time.Time `json:"created_at"`
-			UpdatedAt    time.Time `json:"updated_at"`
-			Picture      string    `json:"picture"`
-			MaxAttendees int       `json:"maxattendees"`
-			Location     string    `json:"location"`
-			Attendees    int       `json:"attendees"`
-		}
+		var e EventWithOrganizer
 		err := rows.Scan(
-			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt,
-			&e.Picture, &e.MaxAttendees, &e.Location, &e.Attendees,
+			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate,
+			&e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location,
+			&e.Organizer, &e.Whitelisted,
 		)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
-		events = append(events, Event{
-			ID:           e.ID,
-			Title:        e.Title,
-			Description:  e.Description,
-			VendorID:     e.VendorID,
-			StartDate:    e.StartDate,
-			EndDate:      e.EndDate,
-			Status:       e.Status,
-			CreatedAt:    e.CreatedAt,
-			UpdatedAt:    e.UpdatedAt,
-			Picture:      e.Picture,
-			MaxAttendees: e.MaxAttendees,
-			Location:     e.Location,
-			Attendees:    e.Attendees,
-		})
+		events = append(events, e)
 	}
 
 	return c.JSON(http.StatusOK, events)
