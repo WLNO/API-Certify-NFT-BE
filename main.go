@@ -209,7 +209,7 @@ func main() {
 	e.GET("/api/events/:id", getEventDetailHandler)
 	e.POST("/api/users/whitelist", createWhitelistHandler)
 	e.POST("/api/users/whitelist/cancel", cancelWhitelistHandler)
-	e.DELETE("/api/events/delete/:id", deleteEventHandler)
+	e.POST("/api/events/cancel/:id", cancelEventHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -851,24 +851,33 @@ func createWhitelistHandler(c echo.Context) error {
 	})
 }
 
-func deleteEventHandler(c echo.Context) error {
+func cancelEventHandler(c echo.Context) error {
 	id := c.Param("id")
 	if id == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event ID is required"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Event ID is required"})
 	}
 
-	result, err := db.Exec(`DELETE FROM events WHERE id = $1`, id)
+	result, err := db.Exec(`UPDATE events SET status = 'canceled' WHERE id = $1`, id)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to delete event", "details": err.Error()})
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error":   "Failed to cancel event",
+			"message": "An error occurred while updating the event status.",
+		})
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "could not determine affected rows"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error":   "Cancellation unclear",
+			"message": "Could not determine if the event was canceled successfully.",
+		})
 	}
 	if rowsAffected == 0 {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "event not found"})
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error":   "Event not found",
+			"message": "No event with the provided ID was found.",
+		})
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{"message": "event deleted successfully"})
+	return c.JSON(http.StatusOK, map[string]string{"message": "Event successfully canceled"})
 }
