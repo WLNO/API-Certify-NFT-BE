@@ -709,11 +709,21 @@ func getEventDetailHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	// 🔍 Count whitelisted entries for this event
+	// 🔍 Hitung whitelist
 	var whitelistedCount int
 	err = db.QueryRow(`SELECT COUNT(*) FROM whitelist WHERE event_id = $1`, dbEvent.ID).Scan(&whitelistedCount)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to count whitelist entries"})
+	}
+
+	// 🔍 Hitung sertifikat yang sudah mint
+	var mintedCount int
+	err = db.QueryRow(`
+		SELECT COUNT(*) FROM certificates 
+		WHERE event_id = $1 AND mint_status = 'minted'
+	`, dbEvent.ID).Scan(&mintedCount)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to count minted certificates"})
 	}
 
 	type EventDetailResponse struct {
@@ -732,6 +742,7 @@ func getEventDetailHandler(c echo.Context) error {
 		Location     string          `json:"location"`
 		Attendees    int             `json:"attendees"`
 		Whitelisted  int             `json:"whitelisted"`
+		Minted       int             `json:"minted"`
 		Requirements json.RawMessage `json:"requirements,omitempty"`
 		Agenda       json.RawMessage `json:"agenda,omitempty"`
 	}
@@ -751,6 +762,7 @@ func getEventDetailHandler(c echo.Context) error {
 		Location:     dbEvent.Location,
 		Attendees:    dbEvent.Attendees,
 		Whitelisted:  whitelistedCount,
+		Minted:       mintedCount,
 		Requirements: dbEvent.Requirements,
 		Agenda:       dbEvent.Agenda,
 	}
