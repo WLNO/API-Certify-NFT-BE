@@ -685,6 +685,13 @@ func getEventDetailHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
+	// 🔍 Count whitelisted entries for this event
+	var whitelistedCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM whitelist WHERE event_id = $1`, dbEvent.ID).Scan(&whitelistedCount)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to count whitelist entries"})
+	}
+
 	type EventDetailResponse struct {
 		ID           int             `json:"id"`
 		Organizer    *string         `json:"organizer"`
@@ -699,9 +706,10 @@ func getEventDetailHandler(c echo.Context) error {
 		Picture      string          `json:"picture"`
 		MaxAttendees int             `json:"maxattendees"`
 		Location     string          `json:"location"`
+		Attendees    int             `json:"attendees"`
+		Whitelisted  int             `json:"whitelisted"`
 		Requirements json.RawMessage `json:"requirements,omitempty"`
 		Agenda       json.RawMessage `json:"agenda,omitempty"`
-		Attendees    int             `json:"attendees"`
 	}
 
 	response := EventDetailResponse{
@@ -717,9 +725,10 @@ func getEventDetailHandler(c echo.Context) error {
 		Picture:      dbEvent.Picture,
 		MaxAttendees: dbEvent.MaxAttendees,
 		Location:     dbEvent.Location,
+		Attendees:    dbEvent.Attendees,
+		Whitelisted:  whitelistedCount,
 		Requirements: dbEvent.Requirements,
 		Agenda:       dbEvent.Agenda,
-		Attendees:    dbEvent.Attendees,
 	}
 
 	if dbEvent.Organizer.Valid {
