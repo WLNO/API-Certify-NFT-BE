@@ -20,6 +20,7 @@ Currently, the API uses wallet address-based authentication. Users and vendors a
 - **`GET /api/users/:walletAddress/events`**: Retrieves all events for a specific user.
 - **`GET /api/users/:walletAddress/certificate`**: Retrieves all certificates for a specific user.
 - **`POST /api/users/whitelist`**: Creates a whitelist entry for an event.
+- **`POST /api/users/whitelist/cancel`**: Cancels a user's whitelist entry for an event.
 
 ### Vendors
 - **`POST /api/vendors/register`**: Registers a new vendor account.
@@ -186,7 +187,7 @@ Retrieves all events a specific user is registered for, based on their wallet ad
 
 #### Response
 **Success (200 OK)**
-Returns an array of `Event` objects.
+Returns an array of `EventWithUserStatus` objects.
 ```json
 [
   {
@@ -203,6 +204,7 @@ Returns an array of `Event` objects.
     "maxattendees": 100,
     "location": "Jakarta Convention Center",
     "attendees": 25,
+    "user_status": "present",
     "requirements": {"items": ["Laptop", "Notebook"]},
     "agenda": {"sessions": [{"time": "09:00", "topic": "Introduction"}]}
   }
@@ -391,9 +393,76 @@ Creates a whitelist entry for a user to attend an event. The system automaticall
 
 ---
 
+#### 6. Cancel Whitelist Entry
+**POST** `/api/users/whitelist/cancel`
+
+Cancels a user's whitelist registration for an event.
+
+#### Request
+**Content-Type:** `application/json`
+
+```json
+{
+  "event_id": 1,
+  "wallet_address": "0x1234567890abcdef..."
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| event_id | integer | Yes | ID of the event to cancel registration for |
+| wallet_address | string | Yes | User's wallet address |
+
+#### Response
+**Success (200 OK)**
+```json
+{
+  "message": "Whitelist cancelled successfully"
+}
+```
+
+**Error Responses**
+
+**400 Bad Request - Invalid Payload**
+```json
+{
+  "error": "invalid request payload"
+}
+```
+
+**400 Bad Request - Missing Required Fields**
+```json
+{
+  "error": "event_id and wallet_address are required"
+}
+```
+
+**404 Not Found - User Not Found**
+```json
+{
+  "error": "user not found"
+}
+```
+
+**404 Not Found - Whitelist Entry Not Found**
+```json
+{
+  "error": "whitelist entry not found"
+}
+```
+
+**500 Internal Server Error**
+```json
+{
+  "error": "failed to cancel whitelist"
+}
+```
+
+---
+
 ### Vendors
 
-#### 6. Register Vendor
+#### 7. Register Vendor
 **POST** `/api/vendors/register`
 
 Registers a new vendor account.
@@ -463,7 +532,7 @@ Registers a new vendor account.
 
 ---
 
-#### 7. Get Events by Vendor
+#### 8. Get Events by Vendor
 **GET** `/api/vendors/:walletAddress/events`
 
 Retrieves all events created by a specific vendor, based on their wallet address.
@@ -525,10 +594,10 @@ Returns an array of `Event` objects.
 
 ### Events
 
-#### 8. Get All Events
+#### 9. Get All Events
 **GET** `/api/events/all`
 
-Retrieves all events with attendee count.
+Retrieves all events with organizer and whitelisted count.
 
 #### Response
 **Success (200 OK)**
@@ -547,7 +616,8 @@ Retrieves all events with attendee count.
     "picture": "uploads/1718000000_event.jpg",
     "maxattendees": 100,
     "location": "Jakarta Convention Center",
-    "attendees": 25
+    "organizer": "NFT Events Co.",
+    "whitelisted": 25
   }
 ]
 ```
@@ -561,7 +631,7 @@ Retrieves all events with attendee count.
 
 ---
 
-#### 9. Create Event
+#### 10. Create Event
 **POST** `/api/events/create`
 
 Creates a new event. Requires multipart form data.
@@ -672,10 +742,10 @@ Creates a new event. Requires multipart form data.
 
 ---
 
-#### 10. Get Event Detail
+#### 11. Get Event Detail
 **GET** `/api/events/:id`
 
-Retrieves detailed information about a specific event, including organizer information.
+Retrieves detailed information about a specific event, including organizer and attendee counts.
 
 #### Path Parameters
 | Parameter | Type | Required | Description |
@@ -687,6 +757,7 @@ Retrieves detailed information about a specific event, including organizer infor
 ```json
 {
   "id": 1,
+  "organizer": "NFT Events Co.",
   "title": "NFT Conference 2024",
   "description": "Annual NFT conference",
   "vendor_id": 1,
@@ -699,9 +770,9 @@ Retrieves detailed information about a specific event, including organizer infor
   "maxattendees": 100,
   "location": "Jakarta Convention Center",
   "attendees": 25,
+  "whitelisted": 50,
   "requirements": {"items": ["Laptop", "Notebook"]},
-  "agenda": {"sessions": [{"time": "09:00", "topic": "Introduction"}]},
-  "organizer": "NFT Events Co."
+  "agenda": {"sessions": [{"time": "09:00", "topic": "Introduction"}]}
 }
 ```
 
@@ -810,6 +881,29 @@ Retrieves detailed information about a specific event, including organizer infor
 }
 ```
 
+### EventWithUserStatus
+This model is returned by `GET /api/users/:walletAddress/events` and includes the user's status for that event.
+```json
+{
+  "id": "integer",
+  "title": "string",
+  "description": "string",
+  "vendor_id": "integer",
+  "start_date": "datetime (RFC3339)",
+  "end_date": "datetime (RFC3339)",
+  "status": "string",
+  "created_at": "datetime (RFC3339)",
+  "updated_at": "datetime (RFC3339)",
+  "picture": "string (file path)",
+  "maxattendees": "integer",
+  "location": "string",
+  "attendees": "integer",
+  "user_status": "string (present|whitelisted)",
+  "requirements": "json (optional)",
+  "agenda": "json (optional)"
+}
+```
+
 ---
 
 ## Error Handling
@@ -861,7 +955,7 @@ The whitelist system automatically manages event registration:
    - `approved`: User gets a confirmed spot if quota is available
    - `pending`: User is placed on waiting list if quota is full
 3. **Duplicate Prevention**: Users cannot register for the same event multiple times
-4. **User Validation**: Only registered users can create whitelist entries
+4. **User Validation**: Only registered users can create or cancel whitelist entries
 
 ---
 
