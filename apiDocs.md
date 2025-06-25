@@ -31,6 +31,9 @@ Currently, the API uses wallet address-based authentication. Users and vendors a
 - **`POST /api/events/create`**: Creates a new event.
 - **`GET /api/events/:id`**: Retrieves detailed information about a specific event.
 
+### Attendance
+- **`GET /api/attendance/event/:event_id`**: Retrieves attendance data for a specific event.
+
 ---
 
 ## Endpoints
@@ -805,6 +808,70 @@ Retrieves detailed information about a specific event, including organizer and a
 ```json
 {
   "error": "database error message"
+}
+```
+
+---
+
+#### 12. Get Attendance by Event
+**GET** `/api/attendance/event/:event_id`
+
+Returns all users who are in the whitelist for the specified event, along with their attendance status (present/absent) and the time they attended (if present).
+
+#### Path Parameters
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| event_id | integer | Yes | The event ID |
+
+#### Response
+**Success (200 OK)**
+```json
+[
+  {
+    "user_id": 2,
+    "name": "Gusti",
+    "wallet_address": "0xABC...",
+    "attend_status": "present",
+    "attended_at": "2025-06-25T08:10:00.000Z"
+  },
+  {
+    "user_id": 3,
+    "name": "Maya",
+    "wallet_address": "0xDEF...",
+    "attend_status": "absent",
+    "attended_at": null
+  }
+]
+```
+
+- If there are no whitelist entries for the event, returns an empty array (`[]`) with 200 OK.
+- Only users in the whitelist for the event are included in the response.
+- `attend_status` is `present` if the user has attended, otherwise `absent`.
+- `attended_at` is the timestamp of attendance if present, otherwise `null`.
+
+**Error Responses**
+
+**400 Bad Request - Missing or Invalid Event ID**
+```json
+{
+  "error": "Event ID parameter is required in the URL."
+}
+```
+```json
+{
+  "error": "Event ID must be a valid positive number."
+}
+```
+
+**500 Internal Server Error**
+```json
+{
+  "error": "Unable to retrieve attendance data for this event. Please try again later."
+}
+```
+```json
+{
+  "error": "Failed to process attendance data. Please contact support if this continues."
 }
 ```
 
