@@ -513,7 +513,21 @@ func getCertificatesByWalletAddressHandler(c echo.Context) error {
 func createEventHandler(c echo.Context) error {
 	title := c.FormValue("title")
 	description := c.FormValue("description")
-	vendorIDStr := c.FormValue("vendor_id")
+	walletAddress := c.FormValue("wallet_address")
+	if walletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
+	}
+
+	// Look up vendor_id from wallet_address
+	var vendorID int
+	err := db.QueryRow("SELECT id FROM vendors WHERE wallet_address = $1", walletAddress).Scan(&vendorID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor not found for provided wallet_address"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get vendor_id from wallet_address"})
+	}
+
 	startDateStr := c.FormValue("start_date")
 	endDateStr := c.FormValue("end_date")
 	status := c.FormValue("status")
@@ -526,9 +540,6 @@ func createEventHandler(c echo.Context) error {
 
 	if title == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "title is required"})
-	}
-	if vendorIDStr == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_id is required"})
 	}
 	if startDateStr == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "start_date is required"})
@@ -550,7 +561,7 @@ func createEventHandler(c echo.Context) error {
 	fmt.Println("Received create event request:")
 	fmt.Println("Title:", title)
 	fmt.Println("Description:", description)
-	fmt.Println("VendorIDStr:", vendorIDStr)
+	fmt.Println("WalletAddress:", walletAddress)
 	fmt.Println("StartDateStr:", startDateStr)
 	fmt.Println("EndDateStr:", endDateStr)
 	fmt.Println("Status:", status)
@@ -575,10 +586,6 @@ func createEventHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to save picture"})
 	}
 
-	vendorID, err := strconv.Atoi(vendorIDStr)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_id must be a number"})
-	}
 	maxAttendees, err := strconv.Atoi(maxAttendeesStr)
 	if err != nil || maxAttendees <= 0 {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "maxattendees must be a positive number"})
@@ -655,7 +662,50 @@ func createEventHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB scan failed", "details": err.Error()})
 	}
 
-	return c.JSON(http.StatusCreated, event)
+	// After event is inserted, get the vendor's wallet address
+	var walletAddressResponse string
+	err = db.QueryRow("SELECT wallet_address FROM vendors WHERE id = $1", vendorID).Scan(&walletAddressResponse)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get vendor wallet address"})
+	}
+
+	type EventCreateResponse struct {
+		ID           int             `json:"id"`
+		Title        string          `json:"title"`
+		Description  string          `json:"description"`
+		VendorID     int             `json:"vendor_id"`
+		WalletAddress string         `json:"wallet_address"`
+		StartDate    time.Time       `json:"start_date"`
+		EndDate      time.Time       `json:"end_date"`
+		Status       string          `json:"status"`
+		CreatedAt    time.Time       `json:"created_at"`
+		UpdatedAt    time.Time       `json:"updated_at"`
+		Picture      string          `json:"picture"`
+		MaxAttendees int             `json:"maxattendees"`
+		Location     string          `json:"location"`
+		Requirements json.RawMessage `json:"requirements,omitempty"`
+		Agenda       json.RawMessage `json:"agenda,omitempty"`
+	}
+
+	resp := EventCreateResponse{
+		ID:           event.ID,
+		Title:        event.Title,
+		Description:  event.Description,
+		VendorID:     event.VendorID,
+		WalletAddress: walletAddressResponse,
+		StartDate:    event.StartDate,
+		EndDate:      event.EndDate,
+		Status:       event.Status,
+		CreatedAt:    event.CreatedAt,
+		UpdatedAt:    event.UpdatedAt,
+		Picture:      event.Picture,
+		MaxAttendees: event.MaxAttendees,
+		Location:     event.Location,
+		Requirements: event.Requirements,
+		Agenda:       event.Agenda,
+	}
+
+	return c.JSON(http.StatusCreated, resp)
 }
 
 // Handler to get event detail by ID

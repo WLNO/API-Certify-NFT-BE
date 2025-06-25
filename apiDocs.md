@@ -643,7 +643,7 @@ Creates a new event. Requires multipart form data.
 |-------|------|----------|-------------|
 | title | string | Yes | Event title |
 | description | string | No | Event description |
-| vendor_id | integer | Yes | ID of the vendor creating the event |
+| wallet_address | string | Yes | Vendor's wallet address (must be registered) |
 | start_date | string | Yes | Start date in RFC3339 format (e.g., "2024-06-15T09:00:00Z") |
 | end_date | string | Yes | End date in RFC3339 format (e.g., "2024-06-15T17:00:00Z") |
 | status | string | Yes | Event status (e.g., "upcoming", "ongoing", "completed") |
@@ -653,6 +653,8 @@ Creates a new event. Requires multipart form data.
 | agenda | string | No | JSON string containing event agenda |
 | picture | file | Yes | Event image file |
 
+> **Note:** The vendor_id is determined automatically from the provided wallet_address.
+
 #### Response
 **Success (201 Created)**
 ```json
@@ -661,6 +663,7 @@ Creates a new event. Requires multipart form data.
   "title": "NFT Conference 2024",
   "description": "Annual NFT conference",
   "vendor_id": 1,
+  "wallet_address": "0xabcdef1234567890...",
   "start_date": "2024-06-15T09:00:00Z",
   "end_date": "2024-06-15T17:00:00Z",
   "status": "upcoming",
@@ -669,7 +672,6 @@ Creates a new event. Requires multipart form data.
   "picture": "uploads/1718000000_event.jpg",
   "maxattendees": 100,
   "location": "Jakarta Convention Center",
-  "attendees": 0,
   "requirements": {"items": ["Laptop", "Notebook"]},
   "agenda": {"sessions": [{"time": "09:00", "topic": "Introduction"}]}
 }
@@ -684,10 +686,17 @@ Creates a new event. Requires multipart form data.
 }
 ```
 
-**400 Bad Request - Invalid Data Types**
+**400 Bad Request - Missing Wallet Address**
 ```json
 {
-  "error": "vendor_id must be a number"
+  "error": "wallet_address is required"
+}
+```
+
+**400 Bad Request - Vendor Not Found**
+```json
+{
+  "error": "vendor not found for provided wallet_address"
 }
 ```
 
