@@ -212,6 +212,7 @@ func main() {
 	e.POST("/api/events/cancel/:id", cancelEventHandler)
 	e.GET("/api/users/:walletAddress", getUserByWalletAddressHandler)
 	e.GET("/api/events/:id/whitelist", getUserByWhitelist)
+	e.GET("/api/attendance/event/:event_id", getAttendanceByEventHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -1068,4 +1069,62 @@ func getUserByWhitelist(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, whitelisted)
+}
+
+// Handler to get attendance status for all whitelisted users in an event
+func getAttendanceByEventHandler(c echo.Context) error {
+	eventIDStr := c.Param("event_id")
+	if eventIDStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Event ID parameter is required in the URL."})
+	}
+	eventID, err := strconv.Atoi(eventIDStr)
+	if err != nil || eventID <= 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Event ID must be a valid positive number."})
+	}
+
+	query := `
+		SELECT
+			u.id AS user_id,
+			u.name,
+			u.wallet_address,
+			COALESCE(a.attendance_status, 'absent') AS attend_status,
+			a.created_at AS attended_at
+		FROM whitelist w
+		JOIN users u ON w.user_id = u.id
+		LEFT JOIN attendance a ON a.event_id = w.event_id AND a.user_id = w.user_id AND a.attendance_status = 'present'
+		WHERE w.event_id = $1
+		ORDER BY u.name ASC
+	`
+
+	rows, err := db.Query(query, eventID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Unable to retrieve attendance data for this event. Please try again later."})
+	}
+	defer rows.Close()
+
+	type AttendanceUser struct {
+		UserID       int        `json:"user_id"`
+		Name         string     `json:"name"`
+		WalletAddress string    `json:"wallet_address"`
+		AttendStatus string     `json:"attend_status"`
+		AttendedAt   *time.Time `json:"attended_at"`
+	}
+
+	var result []AttendanceUser
+	for rows.Next() {
+		var u AttendanceUser
+		var attendedAt sql.NullTime
+		if err := rows.Scan(&u.UserID, &u.Name, &u.WalletAddress, &u.AttendStatus, &attendedAt); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to process attendance data. Please contact support if this continues."})
+		}
+		if attendedAt.Valid {
+			u.AttendedAt = &attendedAt.Time
+		} else {
+			u.AttendedAt = nil
+		}
+		result = append(result, u)
+	}
+
+	// If no whitelist entries, return empty array
+	return c.JSON(http.StatusOK, result)
 }
