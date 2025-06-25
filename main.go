@@ -555,6 +555,16 @@ func createEventHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "maxattendees is required"})
 	}
 
+	// Prevent duplicate event titles
+	var existingID int
+	err = db.QueryRow("SELECT id FROM events WHERE title = $1", title).Scan(&existingID)
+	if err != nil && err != sql.ErrNoRows {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check for duplicate event title. Please try again later."})
+	}
+	if err == nil {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "An event with this title already exists. Please use a different title."})
+	}
+
 	file, err := c.FormFile("picture")
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "picture file is required"})
