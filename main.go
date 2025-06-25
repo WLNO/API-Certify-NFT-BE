@@ -605,6 +605,9 @@ func createEventHandler(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid start_date format"})
 	}
+	// if startDate.Before(time.Now()) {
+	// 	return c.JSON(http.StatusBadRequest, map[string]string{"error": "The event start date cannot be in the past. Please choose a future date and time."})
+	// }
 	endDate, err := time.Parse(time.RFC3339, endDateStr)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid end_date format"})
