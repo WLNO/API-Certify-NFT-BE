@@ -877,6 +877,65 @@ Returns all users who are in the whitelist for the specified event, along with t
 
 ---
 
+#### 13. Mark Attendance
+**POST** `/api/attendance/mark`
+
+Marks a user's attendance for an event using a token.
+
+#### Request Body
+**Content-Type:** `application/json`
+
+```json
+{
+  "token": "a1b2c",
+  "wallet_address": "0x1234567890abcdef..."
+}
+```
+
+| Field          | Type   | Required | Description                               |
+|----------------|--------|----------|-------------------------------------------|
+| token          | string | Yes      | The 5-character event token.              |
+| wallet_address | string | Yes      | The user's wallet address.                |
+
+#### Responses
+**Success (200 OK)**
+```json
+{
+  "message": "Attendance marked successfully"
+}
+```
+
+**Error Responses**
+
+*   **400 Bad Request** - Missing required fields.
+    ```json
+    { "error": "token and wallet_address are required" }
+    ```
+*   **403 Forbidden** - Event not ongoing or user not approved.
+    ```json
+    { "error": "Attendance is not open for this event right now" }
+    ```
+    ```json
+    { "error": "Your whitelist status is not approved" }
+    ```
+*   **404 Not Found** - Invalid token or user not found.
+    ```json
+    { "error": "Invalid event token" }
+    ```
+    ```json
+    { "error": "User with this wallet address not found" }
+    ```
+*   **409 Conflict** - User has already marked attendance.
+    ```json
+    { "error": "You have already marked your attendance for this event" }
+    ```
+*   **500 Internal Server Error**
+    ```json
+    { "error": "server error message" }
+    ```
+
+---
+
 ## Data Models
 
 ### Event
@@ -896,7 +955,8 @@ Returns all users who are in the whitelist for the specified event, along with t
   "location": "string",
   "attendees": "integer",
   "requirements": "json (optional)",
-  "agenda": "json (optional)"
+  "agenda": "json (optional)",
+  "token": "string"
 }
 ```
 
