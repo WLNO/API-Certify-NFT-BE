@@ -878,7 +878,7 @@ Returns all users who are in the whitelist for the specified event, along with t
 ---
 
 #### 13. Mark Attendance
-**POST** `/api/attendance/mark`
+**POST** `/api/users/attend`
 
 Marks a user's attendance for an event using a token.
 

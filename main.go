@@ -62,8 +62,14 @@ func registerUserHandler(c echo.Context) error {
 	if err := c.Bind(&u); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
 	}
-	if u.Name == "" || u.WalletAddress == "" || u.Email == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name, email, and wallet_address are required"})
+	if u.Name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
+	}
+	if u.Email == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "email is required"})
+	}
+	if u.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
 	}
 
 	registered, err := isWalletRegistered(u.WalletAddress)
@@ -87,8 +93,14 @@ func registerVendorHandler(c echo.Context) error {
 	if err := c.Bind(&v); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
 	}
-	if v.VendorName == "" || v.Email == "" || v.WalletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_name, email, and wallet_address are required"})
+	if v.VendorName == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_name is required"})
+	}
+	if v.Email == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "email is required"})
+	}
+	if v.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
 	}
 
 	registered, err := isWalletRegistered(v.WalletAddress)
@@ -214,7 +226,7 @@ func main() {
 	e.GET("/api/users/:walletAddress", getUserByWalletAddressHandler)
 	e.GET("/api/events/:id/whitelist", getUserByWhitelist)
 	e.GET("/api/attendance/event/:event_id", getAttendanceByEventHandler)
-	e.POST("/api/attendance/mark", markAttendanceHandler)
+	e.POST("/api/users/attend", markAttendanceHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -229,8 +241,11 @@ func cancelWhitelistHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request payload"})
 	}
 
-	if payload.EventID == 0 || payload.WalletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_id and wallet_address are required"})
+	if payload.EventID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_id is required"})
+	}
+	if payload.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
 	}
 
 	// Get user_id from wallet_address
@@ -853,8 +868,11 @@ func createWhitelistHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
 
-	if input.EventID == 0 || input.WalletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_id and wallet_address are required"})
+	if input.EventID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_id is required"})
+	}
+	if input.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
 	}
 
 	// Get user_id based on wallet_address
@@ -1156,8 +1174,11 @@ func markAttendanceHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
 	}
 
-	if payload.Token == "" || payload.WalletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "token and wallet_address are required"})
+	if payload.Token == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "token is required"})
+	}
+	if payload.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
 	}
 
 	// 1. Find event by token and check if it's ongoing
