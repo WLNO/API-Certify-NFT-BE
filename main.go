@@ -192,6 +192,11 @@ func main() {
 	// Health check endpoint
 	api.GET("/health", healthHandler)
 
+	// Endpoint: cek status absen user
+	api.GET("/users/:walletAddress/events/:eventId/attendance-status", getUserAttendanceStatusHandler)
+	// Endpoint: cek status whitelist user
+	api.GET("/users/:walletAddress/events/:eventId/whitelist-status", getUserWhitelistStatusHandler)
+
 	// Set waktu mulai aplikasi untuk uptime
 	appStartTime = time.Now()
 
@@ -1286,4 +1291,58 @@ func healthHandler(c echo.Context) error {
 		"hostname": hostname,
 		"uptime": uptime,
 	})
+}
+
+// Handler: cek status absen user
+func getUserAttendanceStatusHandler(c echo.Context) error {
+	walletAddress := c.Param("walletAddress")
+	eventIdStr := c.Param("eventId")
+	if walletAddress == "" || eventIdStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress and eventId are required"})
+	}
+	eventID, err := strconv.Atoi(eventIdStr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "eventId must be a number"})
+	}
+	var userID int
+	err = db.QueryRow("SELECT id FROM users WHERE wallet_address = $1", walletAddress).Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusOK, map[string]bool{"attended": false})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to find user"})
+	}
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM attendance WHERE event_id = $1 AND user_id = $2 AND attendance_status = 'present'", eventID, userID).Scan(&count)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check attendance"})
+	}
+	return c.JSON(http.StatusOK, map[string]bool{"attended": count > 0})
+}
+
+// Handler: cek status whitelist user
+func getUserWhitelistStatusHandler(c echo.Context) error {
+	walletAddress := c.Param("walletAddress")
+	eventIdStr := c.Param("eventId")
+	if walletAddress == "" || eventIdStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress and eventId are required"})
+	}
+	eventID, err := strconv.Atoi(eventIdStr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "eventId must be a number"})
+	}
+	var userID int
+	err = db.QueryRow("SELECT id FROM users WHERE wallet_address = $1", walletAddress).Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusOK, map[string]bool{"whitelisted": false})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to find user"})
+	}
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM whitelist WHERE event_id = $1 AND user_id = $2 AND status = 'approved'", eventID, userID).Scan(&count)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check whitelist"})
+	}
+	return c.JSON(http.StatusOK, map[string]bool{"whitelisted": count > 0})
 }
