@@ -36,6 +36,9 @@ Currently, the API uses wallet address-based authentication. Users and vendors a
 ### Attendance
 - **`GET /api/attendance/event/:event_id`**: Retrieves attendance data for a specific event.
 
+### Health
+- **`GET /api/health`**: Health Check
+
 ---
 
 ## Endpoints
@@ -929,6 +932,48 @@ Returns all users who are in the whitelist for the specified event, along with t
 ```json
 {
   "error": "Failed to process attendance data. Please contact support if this continues."
+}
+```
+
+---
+
+### Health
+
+#### 15. Health Check
+**GET** `/api/health`
+
+Cek status aplikasi dan infrastruktur secara menyeluruh.
+
+#### Response
+**Success (200 OK)**
+```json
+{
+  "status": "ok",
+  "database": "ok",
+  "server_time": "2024-06-27T10:00:00Z",
+  "app_version": "dev",
+  "environment": "development",
+  "hostname": "ip-172-31-0-1",
+  "uptime": "1h23m45.123s"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| status | string | Status aplikasi secara umum, biasanya "ok" |
+| database | string | Status koneksi database, "ok" jika normal, atau pesan error jika gagal |
+| server_time | string | Waktu server saat ini (RFC3339) |
+| app_version | string | Versi aplikasi (dari env `APP_VERSION` atau default "dev") |
+| environment | string | Environment aplikasi (dari env `APP_ENV` atau default "development") |
+| hostname | string | Hostname server tempat aplikasi berjalan |
+| uptime | string | Lama waktu aplikasi berjalan sejak start |
+
+**Error (500 Internal Server Error)**
+```json
+{
+  "status": "error",
+  "database": "connection refused",
+  ...
 }
 ```
 
