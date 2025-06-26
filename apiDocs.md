@@ -549,7 +549,7 @@ Retrieves all events created by a specific vendor, based on their wallet address
 
 #### Response
 **Success (200 OK)**
-Returns an array of `Event` objects.
+Returns an array of `Event` objects, masing-masing sekarang memiliki field tambahan `certificate_uploaded` (boolean) yang menandakan apakah template certificate sudah di-upload untuk event tersebut.
 ```json
 [
   {
@@ -567,10 +567,17 @@ Returns an array of `Event` objects.
     "location": "Jakarta Convention Center",
     "attendees": 25,
     "requirements": {"items": ["Laptop", "Notebook"]},
-    "agenda": {"sessions": [{"time": "09:00", "topic": "Introduction"}]}
+    "agenda": {"sessions": [{"time": "09:00", "topic": "Introduction"}]},
+    "token": "S6H7S",
+    "certificate_uploaded": true
   }
 ]
 ```
+
+**Penjelasan Field Tambahan:**
+- `certificate_uploaded` (boolean):
+    - `true` jika sudah ada baris di tabel `event_certificates` untuk event ini dan kolom `url_certificate` tidak null/kosong.
+    - `false` jika belum ada baris, atau kolom `url_certificate` null/kosong.
 
 **Error Responses**
 
