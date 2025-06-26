@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
 	"strconv"
@@ -17,6 +19,9 @@ import (
 	_ "github.com/lib/pq"
 )
 
+//==============================================
+// TYPE DEFINITIONS
+//==============================================
 type Event struct {
 	ID           int             `json:"id"`
 	Title        string          `json:"title"`
@@ -55,70 +60,140 @@ type Vendor struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+type CertificateWithEvent struct {
+	ID                  int       `json:"id"`
+	EventID             int       `json:"event_id"`
+	UserID              int       `json:"user_id"`
+	CertificateData     string    `json:"certificate_data"`
+	MintStatus          string    `json:"mint_status"`
+	MintTransactionHash string    `json:"mint_transaction_hash"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	EventTitle          string    `json:"event_title"`
+	EventDescription    string    `json:"event_description"`
+	EventStartDate      time.Time `json:"event_start_date"`
+	EventLocation       string    `json:"event_location"`
+	EventPicture        string    `json:"event_picture"`
+}
+
 var db *sql.DB
 
-func registerUserHandler(c echo.Context) error {
-	var u User
-	if err := c.Bind(&u); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
-	}
-	if u.Name == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
-	}
-	if u.Email == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "email is required"})
-	}
-	if u.WalletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
-	}
-
-	registered, err := isWalletRegistered(u.WalletAddress)
+//==============================================
+// HELPER FUNCTIONS
+//==============================================
+func isWalletRegistered(wallet string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE wallet_address = $1)`, wallet).Scan(&exists)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "server error"})
+		return false, err
 	}
-	if registered {
-		return c.JSON(http.StatusConflict, map[string]string{"error": "wallet address already registered with another account"})
+	if exists {
+		return true, nil
 	}
-
-	query := `INSERT INTO users (email, wallet_address, name) VALUES ($1, $2, $3) RETURNING id, created_at, updated_at`
-	err = db.QueryRow(query, u.Email, u.WalletAddress, u.Name).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
+	err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM vendors WHERE wallet_address = $1)`, wallet).Scan(&exists)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return false, err
 	}
-	return c.JSON(http.StatusCreated, u)
+	return exists, nil
 }
 
-func registerVendorHandler(c echo.Context) error {
-	var v Vendor
-	if err := c.Bind(&v); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
-	}
-	if v.VendorName == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_name is required"})
-	}
-	if v.Email == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "email is required"})
-	}
-	if v.WalletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
+// Helper function to determine the dynamic status of an event
+func calculateStatus(dbStatus string, startDate, endDate time.Time) string {
+	// Jika status sudah di-set manual oleh vendor (final), langsung kembalikan.
+	if dbStatus == "ended" || dbStatus == "canceled" {
+		return dbStatus
 	}
 
-	registered, err := isWalletRegistered(v.WalletAddress)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "server error"})
-	}
-	if registered {
-		return c.JSON(http.StatusConflict, map[string]string{"error": "wallet address already registered with another account"})
+	now := time.Now()
+
+	// Jika waktu sekarang sudah melewati tanggal selesai event
+	if now.After(endDate) {
+		return "minting"
 	}
 
-	query := `INSERT INTO vendors (vendor_name, email, contact_info, wallet_address) VALUES ($1, $2, $3, $4) RETURNING id, created_at, updated_at`
-	err = db.QueryRow(query, v.VendorName, v.Email, v.ContactInfo, v.WalletAddress).Scan(&v.ID, &v.CreatedAt, &v.UpdatedAt)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	// Jika waktu sekarang berada di antara tanggal mulai dan selesai
+	if now.After(startDate) && now.Before(endDate) {
+		return "ongoing"
 	}
-	return c.JSON(http.StatusCreated, v)
+
+	// Jika tidak, berarti event belum dimulai
+	return "upcoming"
 }
 
+//==============================================
+// MAIN FUNCTION
+//==============================================
+func main() {
+	var err error
+
+	// Load .env file
+	err = godotenv.Load()
+	if err != nil {
+		panic(fmt.Sprintf("Error loading .env file: %v", err))
+	}
+
+	dsn := os.Getenv("DATABASE_DSN")
+	if dsn == "" {
+		panic("DATABASE_DSN is not set in environment")
+	}
+
+	db, err = sql.Open("postgres", dsn)
+	if err != nil {
+		panic(fmt.Sprintf("Error opening database: %v", err))
+	}
+	defer db.Close()
+
+	err = db.Ping()
+	if err != nil {
+		panic(fmt.Sprintf("Error connecting to database: %v", err))
+	}
+
+	e := echo.New()
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions, http.MethodPut, http.MethodDelete},
+		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept},
+	}))
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
+
+	// Serve static files from the "uploads" directory
+	e.Static("/uploads", "uploads")
+
+	// Group endpoints
+	api := e.Group("/api")
+
+	// Auth endpoints
+	api.POST("/auth/login", loginHandler)
+
+	// Event endpoints
+	api.GET("/events/all", getEventsHandler)
+	api.POST("/events/create", createEventHandler)
+	api.GET("/events/:id", getEventDetailHandler)
+	api.POST("/events/cancel/:id", cancelEventHandler)
+	api.POST("/events/:id/update", updateEventStatusHandler)
+	api.GET("/attendance/event/:event_id", getAttendanceByEventHandler)
+	api.GET("/events/:id/whitelist", getUserByWhitelist)
+
+	// User endpoints
+	api.POST("/users/register", registerUserHandler)
+	api.POST("/users/attend", markAttendanceHandler)
+	api.GET("/users/:walletAddress", getUserByWalletAddressHandler)
+	api.GET("/users/:walletAddress/events", getEventsByWalletAddressHandler)
+	api.GET("/users/:walletAddress/certificate", getCertificatesByWalletAddressHandler)
+	api.POST("/users/whitelist", createWhitelistHandler)
+	api.POST("/users/whitelist/cancel", cancelWhitelistHandler)
+
+	// Vendor endpoints
+	api.POST("/vendors/register", registerVendorHandler)
+	api.GET("/vendors/:walletAddress/events", getEventsByVendorWalletAddressHandler)
+
+	e.Logger.Fatal(e.Start(":4002"))
+}
+
+//==============================================
+// AUTH HANDLERS
+//==============================================
 func loginHandler(c echo.Context) error {
 	var body struct {
 		WalletAddress string `json:"wallet_address"`
@@ -165,134 +240,146 @@ func loginHandler(c echo.Context) error {
 	})
 }
 
-func isWalletRegistered(wallet string) (bool, error) {
-	var exists bool
-	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE wallet_address = $1)`, wallet).Scan(&exists)
-	if err != nil {
-		return false, err
+//==============================================
+// EVENT HANDLERS
+//==============================================
+func createEventHandler(c echo.Context) error {
+	title := c.FormValue("title")
+	description := c.FormValue("description")
+	walletAddress := c.FormValue("wallet_address")
+	startDateStr := c.FormValue("start_date")
+	endDateStr := c.FormValue("end_date")
+	maxAttendeesStr := c.FormValue("maxattendees")
+	location := c.FormValue("location")
+	requirementsStr := c.FormValue("requirements")
+	agendaStr := c.FormValue("agenda")
+
+	if title == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "title is required"})
 	}
-	if exists {
-		return true, nil
+	if description == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "description is required"})
 	}
-	err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM vendors WHERE wallet_address = $1)`, wallet).Scan(&exists)
-	if err != nil {
-		return false, err
-	}
-	return exists, nil
-}
-
-// Helper function to determine the dynamic status of an event
-func calculateStatus(dbStatus string, startDate, endDate time.Time) string {
-	// Jika status sudah di-set manual oleh vendor (final), langsung kembalikan.
-	if dbStatus == "ended" || dbStatus == "canceled" {
-		return dbStatus
-	}
-
-	now := time.Now()
-
-	// Jika waktu sekarang sudah melewati tanggal selesai event
-	if now.After(endDate) {
-		return "minting"
-	}
-
-	// Jika waktu sekarang berada di antara tanggal mulai dan selesai
-	if now.After(startDate) && now.Before(endDate) {
-		return "ongoing"
-	}
-
-	// Jika tidak, berarti event belum dimulai
-	return "upcoming"
-}
-
-func main() {
-	var err error
-
-	// Load .env file
-	err = godotenv.Load()
-	if err != nil {
-		panic(fmt.Sprintf("Error loading .env file: %v", err))
-	}
-
-	dsn := os.Getenv("DATABASE_DSN")
-	if dsn == "" {
-		panic("DATABASE_DSN is not set in environment")
-	}
-
-	db, err = sql.Open("postgres", dsn)
-	if err != nil {
-		panic(fmt.Sprintf("Error opening database: %v", err))
-	}
-	defer db.Close()
-
-	err = db.Ping()
-	if err != nil {
-		panic(fmt.Sprintf("Error connecting to database: %v", err))
-	}
-
-	e := echo.New()
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"*"},
-		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
-	}))
-	e.GET("/api/events/all", getEventsHandler)
-	e.POST("/api/events/create", createEventHandler)
-	e.POST("/api/users/register", registerUserHandler)
-	e.POST("/api/vendors/register", registerVendorHandler)
-	e.POST("/api/auth/login", loginHandler)
-	e.GET("/api/users/:walletAddress/events", getEventsByWalletAddressHandler)
-	e.GET("/api/users/:walletAddress/certificate", getCertificatesByWalletAddressHandler)
-	e.GET("/api/vendors/:walletAddress/events", getEventsByVendorWalletAddressHandler)
-	e.GET("/api/events/:id", getEventDetailHandler)
-	e.POST("/api/users/whitelist", createWhitelistHandler)
-	e.POST("/api/users/whitelist/cancel", cancelWhitelistHandler)
-	e.POST("/api/events/cancel/:id", cancelEventHandler)
-	e.GET("/api/users/:walletAddress", getUserByWalletAddressHandler)
-	e.GET("/api/events/:id/whitelist", getUserByWhitelist)
-	e.GET("/api/attendance/event/:event_id", getAttendanceByEventHandler)
-	e.POST("/api/users/attend", markAttendanceHandler)
-
-	e.Logger.Fatal(e.Start(":4002"))
-}
-
-// Handler to cancel whitelist entry
-func cancelWhitelistHandler(c echo.Context) error {
-	var payload struct {
-		EventID       int    `json:"event_id"`
-		WalletAddress string `json:"wallet_address"`
-	}
-	if err := c.Bind(&payload); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request payload"})
-	}
-
-	if payload.EventID == 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_id is required"})
-	}
-	if payload.WalletAddress == "" {
+	if walletAddress == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
 	}
+	if startDateStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "start_date is required"})
+	}
+	if endDateStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "end_date is required"})
+	}
+	if maxAttendeesStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "maxattendees is required"})
+	}
+	if location == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "location is required"})
+	}
 
-	// Get user_id from wallet_address
-	var userID int
-	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, payload.WalletAddress).Scan(&userID)
+	var vendorID int
+	err := db.QueryRow("SELECT id FROM vendors WHERE wallet_address = $1", walletAddress).Scan(&vendorID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Vendor not found"})
 		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	// Delete the whitelist entry
-	result, err := db.Exec(`DELETE FROM whitelist WHERE event_id = $1 AND user_id = $2`, payload.EventID, userID)
+	layout := "2006-01-02T15:04"
+	startDate, err := time.Parse(layout, startDateStr)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to cancel whitelist"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid start_date format. Use YYYY-MM-DDTHH:MM"})
+	}
+	endDate, err := time.Parse(layout, endDateStr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid end_date format. Use YYYY-MM-DDTHH:MM"})
+	}
+	maxAttendees, err := strconv.Atoi(maxAttendeesStr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid maxattendees format"})
 	}
 
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "whitelist entry not found"})
+	file, err := c.FormFile("picture")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "picture is required"})
+	}
+	src, err := file.Open()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to open picture file"})
+	}
+	defer src.Close()
+
+	picturePath := fmt.Sprintf("uploads/%d_%s", time.Now().Unix(), file.Filename)
+	dst, err := os.Create(picturePath)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save picture file"})
+	}
+	defer dst.Close()
+
+	if _, err = io.Copy(dst, src); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to copy picture file"})
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{"message": "Whitelist cancelled successfully"})
+	// Generate a random 5-character alphanumeric token.
+	const letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	const length = 5
+	ret := make([]byte, length)
+	for i := 0; i < length; i++ {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate token"})
+		}
+		ret[i] = letters[num.Int64()]
+	}
+	token := string(ret)
+
+	query := `INSERT INTO events (title, description, vendor_id, start_date, end_date, picture, maxattendees, location, requirements, agenda, token) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, created_at, updated_at`
+	var eventID int
+	var createdAt, updatedAt time.Time
+	err = db.QueryRow(query, title, description, vendorID, startDate, endDate, picturePath, maxAttendees, location, json.RawMessage(requirementsStr), json.RawMessage(agendaStr), token).Scan(&eventID, &createdAt, &updatedAt)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	type EventCreateResponse struct {
+		ID            int             `json:"id"`
+		Title         string          `json:"title"`
+		Description   string          `json:"description"`
+		VendorID      int             `json:"vendor_id"`
+		WalletAddress string          `json:"wallet_address"`
+		StartDate     time.Time       `json:"start_date"`
+		EndDate       time.Time       `json:"end_date"`
+		Status        string          `json:"status"`
+		CreatedAt     time.Time       `json:"created_at"`
+		UpdatedAt     time.Time       `json:"updated_at"`
+		Picture       string          `json:"picture"`
+		MaxAttendees  int             `json:"maxattendees"`
+		Location      string          `json:"location"`
+		Requirements  json.RawMessage `json:"requirements,omitempty"`
+		Agenda        json.RawMessage `json:"agenda,omitempty"`
+		Token         string          `json:"token"`
+	}
+
+	eventResponse := EventCreateResponse{
+		ID:            eventID,
+		Title:         title,
+		Description:   description,
+		VendorID:      vendorID,
+		WalletAddress: walletAddress,
+		StartDate:     startDate,
+		EndDate:       endDate,
+		Status:        "upcoming",
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
+		Picture:       "https://api.gpadaka.com/" + picturePath,
+		MaxAttendees:  maxAttendees,
+		Location:      location,
+		Requirements:  json.RawMessage(requirementsStr),
+		Agenda:        json.RawMessage(agendaStr),
+		Token:         token,
+	}
+
+	return c.JSON(http.StatusCreated, eventResponse)
 }
 
 func getEventsHandler(c echo.Context) error {
@@ -331,20 +418,372 @@ func getEventsHandler(c echo.Context) error {
 
 	var events []EventWithOrganizer
 	for rows.Next() {
-		var e EventWithOrganizer
+		var event EventWithOrganizer
+		var dbStatus string
+		var startDate, endDate time.Time
+		var picturePath string
+
 		err := rows.Scan(
-			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate,
-			&e.Status, &e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location,
-			&e.Organizer, &e.Whitelisted,
+			&event.ID, &event.Title, &event.Description, &event.VendorID, &startDate, &endDate,
+			&dbStatus, &event.CreatedAt, &event.UpdatedAt, &picturePath, &event.MaxAttendees, &event.Location,
+			&event.Organizer, &event.Whitelisted,
 		)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
-		e.Status = calculateStatus(e.Status, e.StartDate, e.EndDate)
-		events = append(events, e)
+		event.StartDate = startDate
+		event.EndDate = endDate
+		event.Status = calculateStatus(dbStatus, startDate, endDate)
+		event.Picture = "https://api.gpadaka.com/" + picturePath
+		events = append(events, event)
 	}
 
 	return c.JSON(http.StatusOK, events)
+}
+
+func getEventDetailHandler(c echo.Context) error {
+	id := c.Param("id")
+	eventID, err := strconv.Atoi(id)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid event ID"})
+	}
+
+	query := `
+		SELECT
+			e.id,
+			v.vendor_name,
+			e.title,
+			e.description,
+			e.vendor_id,
+			e.start_date,
+			e.end_date,
+			e.status,
+			e.created_at,
+			e.updated_at,
+			e.picture,
+			e.maxattendees,
+			e.location,
+			COALESCE(att_counts.attendees, 0) as attendees,
+			COALESCE(wl_counts.whitelisted, 0) as whitelisted,
+			COALESCE(mint_counts.minted, 0) as minted,
+			e.requirements,
+			e.agenda,
+			e.token
+		FROM events e
+		LEFT JOIN vendors v ON e.vendor_id = v.id
+		LEFT JOIN (SELECT event_id, COUNT(*) as attendees FROM attendance WHERE attendance_status = 'present' GROUP BY event_id) att_counts ON e.id = att_counts.event_id
+		LEFT JOIN (SELECT event_id, COUNT(*) as whitelisted FROM whitelist WHERE status = 'approved' GROUP BY event_id) wl_counts ON e.id = wl_counts.event_id
+		LEFT JOIN (SELECT event_id, COUNT(*) as minted FROM certificates WHERE mint_status = 'success' GROUP BY event_id) mint_counts ON e.id = mint_counts.event_id
+		WHERE e.id = $1
+	`
+	var event struct {
+		ID           int             `json:"id"`
+		Organizer    *string         `json:"organizer"`
+		Title        string          `json:"title"`
+		Description  string          `json:"description"`
+		VendorID     int             `json:"vendor_id"`
+		StartDate    time.Time       `json:"start_date"`
+		EndDate      time.Time       `json:"end_date"`
+		Status       string          `json:"status"`
+		CreatedAt    time.Time       `json:"created_at"`
+		UpdatedAt    time.Time       `json:"updated_at"`
+		Picture      string          `json:"picture"`
+		MaxAttendees int             `json:"maxattendees"`
+		Location     string          `json:"location"`
+		Attendees    int             `json:"attendees"`
+		Whitelisted  int             `json:"whitelisted"`
+		Minted       int             `json:"minted"`
+		Requirements json.RawMessage `json:"requirements,omitempty"`
+		Agenda       json.RawMessage `json:"agenda,omitempty"`
+		Token        string          `json:"token"`
+	}
+	var dbStatus string
+	var startDate, endDate time.Time
+	var picturePath string
+
+	err = db.QueryRow(query, eventID).Scan(
+		&event.ID, &event.Organizer, &event.Title, &event.Description,
+		&event.VendorID, &startDate, &endDate, &dbStatus,
+		&event.CreatedAt, &event.UpdatedAt, &picturePath, &event.MaxAttendees,
+		&event.Location, &event.Attendees, &event.Whitelisted, &event.Minted,
+		&event.Requirements, &event.Agenda, &event.Token,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Event not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	event.StartDate = startDate
+	event.EndDate = endDate
+	event.Status = calculateStatus(dbStatus, startDate, endDate)
+	event.Picture = "https://api.gpadaka.com/" + picturePath
+
+	return c.JSON(http.StatusOK, event)
+}
+
+func updateEventStatusHandler(c echo.Context) error {
+	eventID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || eventID <= 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid event ID"})
+	}
+
+	var payload struct {
+		Status        string `json:"status"`
+		WalletAddress string `json:"wallet_address"`
+	}
+
+	if err := c.Bind(&payload); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+
+	if payload.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
+	}
+
+	// Validate status
+	if payload.Status != "ended" && payload.Status != "minting" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid status. Must be 'ended' or 'minting'"})
+	}
+
+	// 1. Get vendor_id from wallet_address
+	var vendorID int
+	err = db.QueryRow("SELECT id FROM vendors WHERE wallet_address = $1", payload.WalletAddress).Scan(&vendorID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Vendor not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to verify vendor"})
+	}
+
+	// 2. Verify vendor owns the event
+	var dbVendorID int
+	var dbStatus string
+	var startDate, endDate time.Time
+	err = db.QueryRow("SELECT vendor_id, status, start_date, end_date FROM events WHERE id = $1", eventID).Scan(&dbVendorID, &dbStatus, &startDate, &endDate)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Event not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get event details"})
+	}
+
+	if dbVendorID != vendorID {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "You are not the owner of this event"})
+	}
+
+	// 3. Check logic for status change
+	calculatedStatus := calculateStatus(dbStatus, startDate, endDate)
+
+	if payload.Status == "ended" && calculatedStatus != "minting" {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Event cannot be marked as 'ended' yet. It is currently " + calculatedStatus})
+	}
+
+	if payload.Status == "minting" && dbStatus != "ended" {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Event is not 'ended', so it cannot be changed back to 'minting'"})
+	}
+
+	// 4. Update the status in the database
+	_, err = db.Exec("UPDATE events SET status = $1 WHERE id = $2", payload.Status, eventID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update event status"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Event status updated successfully to " + payload.Status})
+}
+
+func cancelEventHandler(c echo.Context) error {
+	eventID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid event ID"})
+	}
+
+	var payload struct {
+		WalletAddress string `json:"wallet_address"`
+	}
+	if err := c.Bind(&payload); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+
+	var vendorID int
+	err = db.QueryRow("SELECT id FROM vendors WHERE wallet_address = $1", payload.WalletAddress).Scan(&vendorID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Vendor not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to verify vendor"})
+	}
+
+	var dbVendorID int
+	err = db.QueryRow("SELECT vendor_id FROM events WHERE id = $1", eventID).Scan(&dbVendorID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Event not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get event details"})
+	}
+
+	if dbVendorID != vendorID {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "You are not the owner of this event"})
+	}
+
+	_, err = db.Exec("UPDATE events SET status = 'canceled' WHERE id = $1", eventID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to cancel event"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Event canceled successfully"})
+}
+
+func getAttendanceByEventHandler(c echo.Context) error {
+	eventIDStr := c.Param("event_id")
+	if eventIDStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Event ID parameter is required in the URL."})
+	}
+	eventID, err := strconv.Atoi(eventIDStr)
+	if err != nil || eventID <= 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Event ID must be a valid positive number."})
+	}
+
+	query := `
+		SELECT
+			u.id AS user_id,
+			u.name,
+			u.wallet_address,
+			COALESCE(a.attendance_status, 'absent') AS attend_status,
+			a.created_at AS attended_at
+		FROM whitelist w
+		JOIN users u ON w.user_id = u.id
+		LEFT JOIN attendance a ON a.event_id = w.event_id AND a.user_id = w.user_id AND a.attendance_status = 'present'
+		WHERE w.event_id = $1
+		ORDER BY u.name ASC
+	`
+
+	rows, err := db.Query(query, eventID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Unable to retrieve attendance data for this event. Please try again later."})
+	}
+	defer rows.Close()
+
+	type AttendanceUser struct {
+		UserID        int        `json:"user_id"`
+		Name          string     `json:"name"`
+		WalletAddress string     `json:"wallet_address"`
+		AttendStatus  string     `json:"attend_status"`
+		AttendedAt    *time.Time `json:"attended_at"`
+	}
+
+	var result []AttendanceUser
+	for rows.Next() {
+		var u AttendanceUser
+		var attendedAt sql.NullTime
+		if err := rows.Scan(&u.UserID, &u.Name, &u.WalletAddress, &u.AttendStatus, &attendedAt); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to process attendance data. Please contact support if this continues."})
+		}
+		if attendedAt.Valid {
+			u.AttendedAt = &attendedAt.Time
+		} else {
+			u.AttendedAt = nil
+		}
+		result = append(result, u)
+	}
+
+	// If no whitelist entries, return empty array
+	return c.JSON(http.StatusOK, result)
+}
+
+func getUserByWhitelist(c echo.Context) error {
+	eventIDStr := c.Param("id")
+	if eventIDStr == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Event ID parameter is required in the URL."})
+	}
+
+	eventID, err := strconv.Atoi(eventIDStr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid event ID"})
+	}
+
+	query := `SELECT u.id, u.name, u.email, u.wallet_address, w.status, w.created_at FROM users u JOIN whitelist w ON u.id = w.user_id WHERE w.event_id = $1`
+
+	rows, err := db.Query(query, eventID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to retrieve whitelisted users"})
+	}
+	defer rows.Close()
+
+	type WhitelistedUser struct {
+		ID            int       `json:"id"`
+		UserID        int       `json:"user_id"`
+		Name          string    `json:"name"`
+		Email         string    `json:"email"`
+		WalletAddress string    `json:"wallet_address"`
+		Status        string    `json:"status"`
+		CreatedAt     time.Time `json:"created_at"`
+	}
+
+	var result []WhitelistedUser
+	for rows.Next() {
+		var u WhitelistedUser
+		if err := rows.Scan(&u.UserID, &u.Name, &u.Email, &u.WalletAddress, &u.Status, &u.CreatedAt); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to scan user data"})
+		}
+		result = append(result, u)
+	}
+
+	// If no whitelist entries, return empty array
+	return c.JSON(http.StatusOK, result)
+}
+
+//==============================================
+// USER HANDLERS
+//==============================================
+func registerUserHandler(c echo.Context) error {
+	var u User
+	if err := c.Bind(&u); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	if u.Name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
+	}
+	if u.Email == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "email is required"})
+	}
+	if u.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
+	}
+
+	registered, err := isWalletRegistered(u.WalletAddress)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "server error"})
+	}
+	if registered {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "wallet address already registered with another account"})
+	}
+
+	query := `INSERT INTO users (email, wallet_address, name) VALUES ($1, $2, $3) RETURNING id, created_at, updated_at`
+	err = db.QueryRow(query, u.Email, u.WalletAddress, u.Name).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusCreated, u)
+}
+
+func getUserByWalletAddressHandler(c echo.Context) error {
+	walletAddress := c.Param("walletAddress")
+	if walletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
+	}
+
+	var user User
+	query := `SELECT id, name, email, wallet_address, created_at, updated_at FROM users WHERE wallet_address = $1`
+	err := db.QueryRow(query, walletAddress).Scan(&user.ID, &user.Name, &user.Email, &user.WalletAddress, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, user)
 }
 
 func getEventsByWalletAddressHandler(c echo.Context) error {
@@ -412,367 +851,167 @@ func getEventsByWalletAddressHandler(c echo.Context) error {
 
 	var events []EventResponse
 	for rows.Next() {
-		var e EventResponse
+		var event EventResponse
+		var dbStatus string
+		var startDate, endDate time.Time
+		var picturePath string
+		var userStatus sql.NullString
+
 		err := rows.Scan(
-			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status,
-			&e.CreatedAt, &e.UpdatedAt, &e.Picture, &e.MaxAttendees, &e.Location,
-			&e.Requirements, &e.Agenda, &e.Attendees,
-			&e.UserStatus,
+			&event.ID, &event.Title, &event.Description, &event.VendorID, &startDate, &endDate,
+			&dbStatus, &event.CreatedAt, &event.UpdatedAt, &picturePath, &event.MaxAttendees, &event.Location,
+			&event.Requirements, &event.Agenda, &event.Attendees,
+			&userStatus,
 		)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
-		e.Status = calculateStatus(e.Status, e.StartDate, e.EndDate)
-		events = append(events, e)
+
+		event.StartDate = startDate
+		event.EndDate = endDate
+		event.Status = calculateStatus(dbStatus, startDate, endDate)
+		event.Picture = "https://api.gpadaka.com/" + picturePath
+		if userStatus.Valid {
+			event.UserStatus = userStatus.String
+		} else {
+			event.UserStatus = "not_whitelisted"
+		}
+		events = append(events, event)
 	}
 
 	return c.JSON(http.StatusOK, events)
 }
 
-// CertificateWithEvent combines certificate data with event fields for richer output
-type CertificateWithEvent struct {
-	ID                  int       `json:"id"`
-	EventID             int       `json:"event_id"`
-	UserID              int       `json:"user_id"`
-	CertificateData     string    `json:"certificate_data"`
-	MintStatus          string    `json:"mint_status"`
-	MintTransactionHash string    `json:"mint_transaction_hash"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
-	EventTitle          string    `json:"event_title"`
-	EventDescription    string    `json:"event_description"`
-	EventStartDate      time.Time `json:"event_start_date"`
-	EventLocation       string    `json:"event_location"`
-	EventPicture        string    `json:"event_picture"`
-}
-
-func createEventHandler(c echo.Context) error {
-	title := c.FormValue("title")
-	description := c.FormValue("description")
-	walletAddress := c.FormValue("wallet_address")
+func getCertificatesByWalletAddressHandler(c echo.Context) error {
+	walletAddress := c.Param("walletAddress")
 	if walletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress is required"})
 	}
 
-	// Look up vendor_id from wallet_address
-	var vendorID int
-	err := db.QueryRow("SELECT id FROM vendors WHERE wallet_address = $1", walletAddress).Scan(&vendorID)
+	var userID int
+	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, walletAddress).Scan(&userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor not found for provided wallet_address"})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get vendor_id from wallet_address"})
-	}
-
-	startDateStr := c.FormValue("start_date")
-	endDateStr := c.FormValue("end_date")
-	maxAttendeesStr := c.FormValue("maxattendees")
-	locationStr := c.FormValue("location")
-
-	// Parse requirements and agenda as string from form
-	requirementsStr := c.FormValue("requirements")
-	agendaStr := c.FormValue("agenda")
-
-	if title == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "title is required"})
-	}
-	if startDateStr == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "start_date is required"})
-	}
-	if endDateStr == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "end_date is required"})
-	}
-	if maxAttendeesStr == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "maxattendees is required"})
-	}
-
-	// Prevent duplicate event titles
-	var existingID int
-	err = db.QueryRow("SELECT id FROM events WHERE title = $1", title).Scan(&existingID)
-	if err != nil && err != sql.ErrNoRows {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check for duplicate event title. Please try again later."})
-	}
-	if err == nil {
-		return c.JSON(http.StatusConflict, map[string]string{"error": "An event with this title already exists. Please use a different title."})
-	}
-
-	file, err := c.FormFile("picture")
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "picture file is required"})
-	}
-	fmt.Println("Received create event request:")
-	fmt.Println("Title:", title)
-	fmt.Println("Description:", description)
-	fmt.Println("WalletAddress:", walletAddress)
-	fmt.Println("StartDateStr:", startDateStr)
-	fmt.Println("EndDateStr:", endDateStr)
-	fmt.Println("MaxAttendeesStr:", maxAttendeesStr)
-	fmt.Println("RequirementsStr:", requirementsStr)
-	fmt.Println("AgendaStr:", agendaStr)
-	filename := fmt.Sprintf("uploads/%d_%s", time.Now().Unix(), file.Filename)
-
-	src, err := file.Open()
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to open uploaded file"})
-	}
-	defer src.Close()
-
-	dst, err := os.Create(filename)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create file on server"})
-	}
-	defer dst.Close()
-
-	if _, err = io.Copy(dst, src); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to save picture"})
-	}
-
-	maxAttendees, err := strconv.Atoi(maxAttendeesStr)
-	if err != nil || maxAttendees <= 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "maxattendees must be a positive number"})
-	}
-	startDate, err := time.Parse(time.RFC3339, startDateStr)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid start_date format"})
-	}
-	// if startDate.Before(time.Now()) {
-	// 	return c.JSON(http.StatusBadRequest, map[string]string{"error": "The event start date cannot be in the past. Please choose a future date and time."})
-	// }
-	endDate, err := time.Parse(time.RFC3339, endDateStr)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid end_date format"})
-	}
-	if startDate.After(endDate) {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "start_date must be before end_date"})
-	}
-
-	// Parse requirementsStr and agendaStr as JSON
-	var requirementsJSON json.RawMessage
-	if requirementsStr != "" {
-		if err := json.Unmarshal([]byte(requirementsStr), &requirementsJSON); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid requirements JSON"})
-		}
-	}
-	var agendaJSON json.RawMessage
-	if agendaStr != "" {
-		if err := json.Unmarshal([]byte(agendaStr), &agendaJSON); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid agenda JSON"})
-		}
-	}
-
-	// Use Event struct and fill all properties including Location, Requirements, Agenda
-	event := Event{
-		Title:        title,
-		Description:  description,
-		VendorID:     vendorID,
-		StartDate:    startDate,
-		EndDate:      endDate,
-		Picture:      filename,
-		MaxAttendees: maxAttendees,
-		Location:     locationStr,
-		Requirements: requirementsJSON,
-		Agenda:       agendaJSON,
-	}
-
-	// Updated query with requirements, agenda, and location
-	query := `
-	    INSERT INTO events (
-			title, description, vendor_id, start_date, end_date,
-			status, picture, maxattendees, location, requirements, agenda
-		) VALUES ($1,$2,$3,$4,$5,'upcoming',$6,$7,$8,$9,$10)
-	    RETURNING id, created_at, updated_at, token
-	`
-
-	row := db.QueryRow(query,
-		event.Title,
-		event.Description,
-		event.VendorID,
-		event.StartDate,
-		event.EndDate,
-		event.Picture,
-		event.MaxAttendees,
-		event.Location,
-		event.Requirements,
-		event.Agenda,
-	)
-
-	fmt.Println("QueryRow executed, now scanning result...")
-
-	err = row.Scan(&event.ID, &event.CreatedAt, &event.UpdatedAt, &event.Token)
-	if err != nil {
-		fmt.Println("DB Scan failed:", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB scan failed", "details": err.Error()})
-	}
-
-	// After event is inserted, get the vendor's wallet address
-	var walletAddressResponse string
-	err = db.QueryRow("SELECT wallet_address FROM vendors WHERE id = $1", vendorID).Scan(&walletAddressResponse)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get vendor wallet address"})
-	}
-
-	type EventCreateResponse struct {
-		ID            int             `json:"id"`
-		Title         string          `json:"title"`
-		Description   string          `json:"description"`
-		VendorID      int             `json:"vendor_id"`
-		WalletAddress string          `json:"wallet_address"`
-		StartDate     time.Time       `json:"start_date"`
-		EndDate       time.Time       `json:"end_date"`
-		Status        string          `json:"status"`
-		CreatedAt     time.Time       `json:"created_at"`
-		UpdatedAt     time.Time       `json:"updated_at"`
-		Picture       string          `json:"picture"`
-		MaxAttendees  int             `json:"maxattendees"`
-		Location      string          `json:"location"`
-		Requirements  json.RawMessage `json:"requirements,omitempty"`
-		Agenda        json.RawMessage `json:"agenda,omitempty"`
-		Token         string          `json:"token"`
-	}
-
-	resp := EventCreateResponse{
-		ID:            event.ID,
-		Title:         event.Title,
-		Description:   event.Description,
-		VendorID:      event.VendorID,
-		WalletAddress: walletAddressResponse,
-		StartDate:     event.StartDate,
-		EndDate:       event.EndDate,
-		Status:        calculateStatus("upcoming", event.StartDate, event.EndDate),
-		CreatedAt:     event.CreatedAt,
-		UpdatedAt:     event.UpdatedAt,
-		Picture:       event.Picture,
-		MaxAttendees:  event.MaxAttendees,
-		Location:      event.Location,
-		Requirements:  event.Requirements,
-		Agenda:        event.Agenda,
-		Token:         event.Token,
-	}
-
-	return c.JSON(http.StatusCreated, resp)
-}
-
-// Handler to get event detail by ID
-func getEventDetailHandler(c echo.Context) error {
-	id := c.Param("id")
-	if id == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event ID is required"})
-	}
-
-	query := `
-      SELECT 
-        e.id, v.vendor_name, e.title, e.description, e.vendor_id,
-        e.start_date, e.end_date, e.status, e.created_at, e.updated_at,
-        e.picture, e.maxattendees, e.location, e.requirements, e.agenda, e.token,
-        COUNT(a.id) as attendees
-      FROM events e
-      LEFT JOIN vendors v ON e.vendor_id = v.id
-      LEFT JOIN attendance a ON a.event_id = e.id AND a.attendance_status = 'present'
-      WHERE e.id = $1
-      GROUP BY e.id, v.vendor_name
-    `
-	row := db.QueryRow(query, id)
-
-	var dbEvent struct {
-		ID           int
-		Organizer    sql.NullString
-		Title        string
-		Description  string
-		VendorID     int
-		StartDate    time.Time
-		EndDate      time.Time
-		Status       string
-		CreatedAt    time.Time
-		UpdatedAt    time.Time
-		Picture      string
-		MaxAttendees int
-		Location     string
-		Requirements json.RawMessage
-		Agenda       json.RawMessage
-		Token        string
-		Attendees    int
-	}
-
-	err := row.Scan(
-		&dbEvent.ID, &dbEvent.Organizer, &dbEvent.Title, &dbEvent.Description, &dbEvent.VendorID,
-		&dbEvent.StartDate, &dbEvent.EndDate, &dbEvent.Status, &dbEvent.CreatedAt, &dbEvent.UpdatedAt,
-		&dbEvent.Picture, &dbEvent.MaxAttendees, &dbEvent.Location, &dbEvent.Requirements, &dbEvent.Agenda, &dbEvent.Token,
-		&dbEvent.Attendees,
-	)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "event not found"})
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
 		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	// 🔍 Hitung whitelist
-	var whitelistedCount int
-	err = db.QueryRow(`SELECT COUNT(*) FROM whitelist WHERE event_id = $1`, dbEvent.ID).Scan(&whitelistedCount)
+	rows, err := db.Query(`
+		SELECT 
+			c.id, c.event_id, c.user_id, c.certificate_data, c.mint_status, c.mint_transaction_hash, c.created_at, c.updated_at,
+			e.title, e.description, e.start_date, e.location, e.picture
+		FROM certificates c
+		JOIN events e ON c.event_id = e.id
+		WHERE c.user_id = $1
+		ORDER BY c.created_at DESC
+	`, userID)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to count whitelist entries"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	var certificates []CertificateWithEvent
+	for rows.Next() {
+		var cert CertificateWithEvent
+		var pictureRaw string
+		err := rows.Scan(
+			&cert.ID, &cert.EventID, &cert.UserID, &cert.CertificateData, &cert.MintStatus, &cert.MintTransactionHash, &cert.CreatedAt, &cert.UpdatedAt,
+			&cert.EventTitle, &cert.EventDescription, &cert.EventStartDate, &cert.EventLocation, &pictureRaw,
+		)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		// Convert picture field to URL path
+		if pictureRaw != "" {
+			cert.EventPicture = "https://api.gpadaka.com/" + pictureRaw
+		} else {
+			cert.EventPicture = ""
+		}
+		certificates = append(certificates, cert)
 	}
 
-	// 🔍 Hitung sertifikat yang sudah mint
-	var mintedCount int
-	err = db.QueryRow(`
-		SELECT COUNT(*) FROM certificates 
-		WHERE event_id = $1 AND mint_status = 'minted'
-	`, dbEvent.ID).Scan(&mintedCount)
+	return c.JSON(http.StatusOK, certificates)
+}
+
+func markAttendanceHandler(c echo.Context) error {
+	var payload struct {
+		EventToken    string `json:"event_token"`
+		WalletAddress string `json:"wallet_address"`
+	}
+
+	if err := c.Bind(&payload); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+
+	if payload.EventToken == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_token is required"})
+	}
+	if payload.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
+	}
+
+	var eventID int
+	var eventStatus string
+	var startDate, endDate time.Time
+	err := db.QueryRow("SELECT id, status, start_date, end_date FROM events WHERE token = $1", payload.EventToken).Scan(&eventID, &eventStatus, &startDate, &endDate)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to count minted certificates"})
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Invalid event token"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to validate event token"})
 	}
 
-	finalStatus := calculateStatus(dbEvent.Status, dbEvent.StartDate, dbEvent.EndDate)
-
-	type EventDetailResponse struct {
-		ID           int             `json:"id"`
-		Organizer    *string         `json:"organizer"`
-		Title        string          `json:"title"`
-		Description  string          `json:"description"`
-		VendorID     int             `json:"vendor_id"`
-		StartDate    time.Time       `json:"start_date"`
-		EndDate      time.Time       `json:"end_date"`
-		Status       string          `json:"status"`
-		CreatedAt    time.Time       `json:"created_at"`
-		UpdatedAt    time.Time       `json:"updated_at"`
-		Picture      string          `json:"picture"`
-		MaxAttendees int             `json:"maxattendees"`
-		Location     string          `json:"location"`
-		Attendees    int             `json:"attendees"`
-		Whitelisted  int             `json:"whitelisted"`
-		Minted       int             `json:"minted"`
-		Requirements json.RawMessage `json:"requirements,omitempty"`
-		Agenda       json.RawMessage `json:"agenda,omitempty"`
-		Token        string          `json:"token"`
+	// Recalculate status to ensure it's current
+	liveStatus := calculateStatus(eventStatus, startDate, endDate)
+	if liveStatus != "ongoing" {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "This event is not currently ongoing. Attendance cannot be marked."})
 	}
 
-	response := EventDetailResponse{
-		ID:           dbEvent.ID,
-		Title:        dbEvent.Title,
-		Description:  dbEvent.Description,
-		VendorID:     dbEvent.VendorID,
-		StartDate:    dbEvent.StartDate,
-		EndDate:      dbEvent.EndDate,
-		Status:       finalStatus,
-		CreatedAt:    dbEvent.CreatedAt,
-		UpdatedAt:    dbEvent.UpdatedAt,
-		Picture:      dbEvent.Picture,
-		MaxAttendees: dbEvent.MaxAttendees,
-		Location:     dbEvent.Location,
-		Attendees:    dbEvent.Attendees,
-		Whitelisted:  whitelistedCount,
-		Minted:       mintedCount,
-		Requirements: dbEvent.Requirements,
-		Agenda:       dbEvent.Agenda,
-		Token:        dbEvent.Token,
+	var userID int
+	err = db.QueryRow("SELECT id FROM users WHERE wallet_address = $1", payload.WalletAddress).Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "User with this wallet address not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to find user"})
 	}
 
-	if dbEvent.Organizer.Valid {
-		response.Organizer = &dbEvent.Organizer.String
+	var whitelistStatus string
+	err = db.QueryRow("SELECT status FROM whitelist WHERE event_id = $1 AND user_id = $2", eventID, userID).Scan(&whitelistStatus)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "You are not whitelisted for this event"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check whitelist status"})
 	}
 
-	return c.JSON(http.StatusOK, response)
+	if whitelistStatus != "approved" {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Your whitelist status is not approved"})
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to start transaction"})
+	}
+
+	_, err = tx.Exec(`
+        INSERT INTO attendance (event_id, user_id, attendance_status, token_input)
+        VALUES ($1, $2, 'present', $3)
+        ON CONFLICT (event_id, user_id) 
+        DO UPDATE SET attendance_status = 'present', token_input = $3, updated_at = NOW()`,
+		eventID, userID, payload.EventToken)
+
+	if err != nil {
+		tx.Rollback()
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to mark attendance"})
+	}
+
+	tx.Commit()
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Attendance marked successfully",
+	})
 }
 
 func createWhitelistHandler(c echo.Context) error {
@@ -855,198 +1094,79 @@ func createWhitelistHandler(c echo.Context) error {
 	})
 }
 
-func cancelEventHandler(c echo.Context) error {
-	id := c.Param("id")
-	if id == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Event ID is required"})
-	}
-
-	// Cek apakah event sudah berstatus canceled
-	var currentStatus string
-	err := db.QueryRow(`SELECT status FROM events WHERE id = $1`, id).Scan(&currentStatus)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusNotFound, map[string]string{
-				"error":   "Event not found",
-				"message": "No event with the provided ID exists.",
-			})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error":   "Failed to check event status",
-			"message": "An error occurred while checking the event status.",
-		})
-	}
-
-	if currentStatus == "canceled" {
-		return c.JSON(http.StatusConflict, map[string]string{
-			"message": "Event is already canceled",
-		})
-	}
-
-	// Update status menjadi 'canceled'
-	result, err := db.Exec(`UPDATE events SET status = 'canceled' WHERE id = $1`, id)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error":   "Failed to cancel event",
-			"message": "An error occurred while updating the event status.",
-		})
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error":   "Cancellation unclear",
-			"message": "Could not determine if the event was canceled successfully.",
-		})
-	}
-	if rowsAffected == 0 {
-		return c.JSON(http.StatusNotFound, map[string]string{
-			"error":   "Event not found",
-			"message": "No event with the provided ID was found.",
-		})
-	}
-
-	return c.JSON(http.StatusOK, map[string]string{
-		"message": "Event successfully canceled",
-	})
-}
-
-func getUserByWalletAddressHandler(c echo.Context) error {
-	walletAddress := c.Param("walletAddress")
-	if walletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "Wallet address is required",
-		})
-	}
-
-	query := `
-		SELECT id, email, wallet_address, name, created_at, updated_at
-		FROM users
-		WHERE wallet_address = $1
-	`
-
-	var user struct {
-		ID            int       `json:"id"`
-		Email         *string   `json:"email,omitempty"`
-		WalletAddress string    `json:"wallet_address"`
-		Name          string    `json:"name"`
-		CreatedAt     time.Time `json:"created_at"`
-		UpdatedAt     time.Time `json:"updated_at"`
-	}
-
-	err := db.QueryRow(query, walletAddress).Scan(
-		&user.ID,
-		&user.Email,
-		&user.WalletAddress,
-		&user.Name,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusNotFound, map[string]string{
-				"error": "User not found",
-			})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error":   "Failed to retrieve user",
-			"details": err.Error(),
-		})
-	}
-
-	return c.JSON(http.StatusOK, user)
-}
-
-func markAttendanceHandler(c echo.Context) error {
+func cancelWhitelistHandler(c echo.Context) error {
 	var payload struct {
-		Token         string `json:"token"`
+		EventID       int    `json:"event_id"`
 		WalletAddress string `json:"wallet_address"`
 	}
-
 	if err := c.Bind(&payload); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request payload"})
 	}
 
-	if payload.Token == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "token is required"})
+	if payload.EventID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_id is required"})
 	}
 	if payload.WalletAddress == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
 	}
 
-	// 1. Find event by token and check if it's ongoing
-	var eventID int
-	var eventStatus string
-	err := db.QueryRow("SELECT id, status FROM events WHERE token = $1", payload.Token).Scan(&eventID, &eventStatus)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "Invalid event token"})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to find event"})
-	}
-
-	// Calculate dynamic status to ensure attendance is only for ongoing events
-	var startDate, endDate time.Time
-	err = db.QueryRow("SELECT start_date, end_date FROM events WHERE id = $1", eventID).Scan(&startDate, &endDate)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get event time"})
-	}
-
-	calculatedStatus := calculateStatus(eventStatus, startDate, endDate)
-	if calculatedStatus != "ongoing" {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "Attendance is not open for this event right now"})
-	}
-
-	// 2. Find user by wallet address
+	// Get user_id from wallet_address
 	var userID int
-	err = db.QueryRow("SELECT id FROM users WHERE wallet_address = $1", payload.WalletAddress).Scan(&userID)
+	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, payload.WalletAddress).Scan(&userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "User with this wallet address not found"})
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
 		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to find user"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	// 3. Check if user is whitelisted and approved
-	var whitelistStatus string
-	err = db.QueryRow("SELECT status FROM whitelist WHERE event_id = $1 AND user_id = $2", eventID, userID).Scan(&whitelistStatus)
+	// Delete the whitelist entry
+	result, err := db.Exec(`DELETE FROM whitelist WHERE event_id = $1 AND user_id = $2`, payload.EventID, userID)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusForbidden, map[string]string{"error": "You are not whitelisted for this event"})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check whitelist status"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to cancel whitelist"})
 	}
 
-	if whitelistStatus != "approved" {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "Your whitelist status is not approved"})
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "whitelist entry not found"})
 	}
 
-	// 4. Check for existing attendance (no need to check for status, as long as there is an entry, it's a duplicate)
-	var existingAttendanceID int
-	err = db.QueryRow("SELECT id FROM attendance WHERE event_id = $1 AND user_id = $2", eventID, userID).Scan(&existingAttendanceID)
-	if err != nil && err != sql.ErrNoRows {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check existing attendance"})
-	}
-	if err == nil {
-		return c.JSON(http.StatusConflict, map[string]string{"error": "You have already marked your attendance for this event"})
-	}
-
-	// 5. Insert into attendance table
-	_, err = db.Exec(`
-        INSERT INTO attendance (event_id, user_id, token_input, attendance_status)
-        VALUES ($1, $2, $3, 'present')
-    `, eventID, userID, payload.Token)
-
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to mark attendance"})
-	}
-
-	return c.JSON(http.StatusOK, map[string]string{"message": "Attendance marked successfully"})
+	return c.JSON(http.StatusOK, map[string]string{"message": "user whitelist canceled successfully"})
 }
 
 //==============================================
 // VENDOR HANDLERS
 //==============================================
+func registerVendorHandler(c echo.Context) error {
+	var v Vendor
+	if err := c.Bind(&v); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	if v.VendorName == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "vendor_name is required"})
+	}
+	if v.Email == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "email is required"})
+	}
+	if v.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet_address is required"})
+	}
+
+	registered, err := isWalletRegistered(v.WalletAddress)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "server error"})
+	}
+	if registered {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "wallet address already registered with another account"})
+	}
+
+	query := `INSERT INTO vendors (vendor_name, email, contact_info, wallet_address) VALUES ($1, $2, $3, $4) RETURNING id, created_at, updated_at`
+	err = db.QueryRow(query, v.VendorName, v.Email, v.ContactInfo, v.WalletAddress).Scan(&v.ID, &v.CreatedAt, &v.UpdatedAt)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusCreated, v)
+}
 
 func getEventsByVendorWalletAddressHandler(c echo.Context) error {
 	walletAddress := c.Param("walletAddress")
@@ -1088,191 +1208,23 @@ func getEventsByVendorWalletAddressHandler(c echo.Context) error {
 
 	var events []Event
 	for rows.Next() {
-		var e Event
+		var event Event
+		var dbStatus string
+		var startDate, endDate time.Time
+		var picturePath string
 		err := rows.Scan(
-			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt,
-			&e.Picture, &e.MaxAttendees, &e.Location, &e.Requirements, &e.Agenda, &e.Token, &e.Attendees,
+			&event.ID, &event.Title, &event.Description, &event.VendorID, &startDate, &endDate,
+			&dbStatus, &event.CreatedAt, &event.UpdatedAt, &picturePath, &event.MaxAttendees, &event.Location,
+			&event.Requirements, &event.Agenda, &event.Token, &event.Attendees,
 		)
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error scanning event"})
 		}
-		e.Status = calculateStatus(e.Status, e.StartDate, e.EndDate)
-		events = append(events, e)
+		event.StartDate = startDate
+		event.EndDate = endDate
+		event.Status = calculateStatus(dbStatus, startDate, endDate)
+		event.Picture = "https://api.gpadaka.com/" + picturePath
+		events = append(events, event)
 	}
-
 	return c.JSON(http.StatusOK, events)
-}
-
-func getUserByWhitelist(c echo.Context) error {
-	eventID := c.Param("id")
-	if eventID == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "Event ID is required",
-		})
-	}
-
-	query := `
-		SELECT
-			w.id,
-			w.user_id,
-			u.name,
-			u.email,
-			w.wallet_address,
-			w.status,
-			w.created_at
-		FROM whitelist w
-		LEFT JOIN users u ON u.id = w.user_id
-		WHERE w.event_id = $1
-		ORDER BY w.created_at ASC
-	`
-
-	rows, err := db.Query(query, eventID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error":   "Failed to query whitelisted users",
-			"details": err.Error(),
-		})
-	}
-	defer rows.Close()
-
-	type WhitelistedUser struct {
-		ID            int       `json:"id"`
-		UserID        int       `json:"user_id"`
-		Name          string    `json:"name"`
-		Email         string    `json:"email"`
-		WalletAddress string    `json:"wallet_address"`
-		Status        string    `json:"status"`
-		CreatedAt     time.Time `json:"created_at"`
-	}
-
-	var whitelisted []WhitelistedUser
-	for rows.Next() {
-		var w WhitelistedUser
-		if err := rows.Scan(
-			&w.ID,
-			&w.UserID,
-			&w.Name,
-			&w.Email,
-			&w.WalletAddress,
-			&w.Status,
-			&w.CreatedAt,
-		); err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{
-				"error":   "Failed to scan row",
-				"details": err.Error(),
-			})
-		}
-		whitelisted = append(whitelisted, w)
-	}
-
-	return c.JSON(http.StatusOK, whitelisted)
-}
-
-func getCertificatesByWalletAddressHandler(c echo.Context) error {
-	walletAddress := c.Param("walletAddress")
-	if walletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress is required"})
-	}
-
-	var userID int
-	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, walletAddress).Scan(&userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-
-	rows, err := db.Query(`
-		SELECT 
-			c.id, c.event_id, c.user_id, c.certificate_data, c.mint_status, c.mint_transaction_hash, c.created_at, c.updated_at,
-			e.title, e.description, e.start_date, e.location, e.picture
-		FROM certificates c
-		JOIN events e ON c.event_id = e.id
-		WHERE c.user_id = $1
-		ORDER BY c.created_at DESC
-	`, userID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-	defer rows.Close()
-
-	var certificates []CertificateWithEvent
-	for rows.Next() {
-		var cert CertificateWithEvent
-		var pictureRaw string
-		err := rows.Scan(
-			&cert.ID, &cert.EventID, &cert.UserID, &cert.CertificateData, &cert.MintStatus, &cert.MintTransactionHash, &cert.CreatedAt, &cert.UpdatedAt,
-			&cert.EventTitle, &cert.EventDescription, &cert.EventStartDate, &cert.EventLocation, &pictureRaw,
-		)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		// Convert picture field to URL path
-		if pictureRaw != "" {
-			cert.EventPicture = "https://api.gpadaka.com/" + pictureRaw
-		} else {
-			cert.EventPicture = ""
-		}
-		certificates = append(certificates, cert)
-	}
-
-	return c.JSON(http.StatusOK, certificates)
-}
-
-func getAttendanceByEventHandler(c echo.Context) error {
-	eventIDStr := c.Param("event_id")
-	if eventIDStr == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Event ID parameter is required in the URL."})
-	}
-	eventID, err := strconv.Atoi(eventIDStr)
-	if err != nil || eventID <= 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Event ID must be a valid positive number."})
-	}
-
-	query := `
-		SELECT
-			u.id AS user_id,
-			u.name,
-			u.wallet_address,
-			COALESCE(a.attendance_status, 'absent') AS attend_status,
-			a.created_at AS attended_at
-		FROM whitelist w
-		JOIN users u ON w.user_id = u.id
-		LEFT JOIN attendance a ON a.event_id = w.event_id AND a.user_id = w.user_id AND a.attendance_status = 'present'
-		WHERE w.event_id = $1
-		ORDER BY u.name ASC
-	`
-
-	rows, err := db.Query(query, eventID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Unable to retrieve attendance data for this event. Please try again later."})
-	}
-	defer rows.Close()
-
-	type AttendanceUser struct {
-		UserID        int        `json:"user_id"`
-		Name          string     `json:"name"`
-		WalletAddress string     `json:"wallet_address"`
-		AttendStatus  string     `json:"attend_status"`
-		AttendedAt    *time.Time `json:"attended_at"`
-	}
-
-	var result []AttendanceUser
-	for rows.Next() {
-		var u AttendanceUser
-		var attendedAt sql.NullTime
-		if err := rows.Scan(&u.UserID, &u.Name, &u.WalletAddress, &u.AttendStatus, &attendedAt); err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to process attendance data. Please contact support if this continues."})
-		}
-		if attendedAt.Valid {
-			u.AttendedAt = &attendedAt.Time
-		} else {
-			u.AttendedAt = nil
-		}
-		result = append(result, u)
-	}
-
-	// If no whitelist entries, return empty array
-	return c.JSON(http.StatusOK, result)
 }

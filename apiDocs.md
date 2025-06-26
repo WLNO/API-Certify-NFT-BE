@@ -30,6 +30,8 @@ Currently, the API uses wallet address-based authentication. Users and vendors a
 - **`GET /api/events/all`**: Retrieves all events.
 - **`POST /api/events/create`**: Creates a new event.
 - **`GET /api/events/:id`**: Retrieves detailed information about a specific event.
+- **`POST /api/events/cancel/:id`**: Cancels an event.
+- **`POST /api/events/:id/update`**: Updates the status of an event.
 
 ### Attendance
 - **`GET /api/attendance/event/:event_id`**: Retrieves attendance data for a specific event.
@@ -813,7 +815,55 @@ Retrieves detailed information about a specific event, including organizer and a
 
 ---
 
-#### 12. Get Attendance by Event
+#### 12. Cancel Event
+**POST** `/api/events/cancel/:id`
+
+Membatalkan event. Hanya bisa dilakukan oleh vendor pemilik event.
+
+**Parameters**
+- `id` (di URL): ID event yang akan dibatalkan.
+
+**Body**
+```json
+{
+  "wallet_address": "string"
+}
+```
+
+**Response**
+- `200 OK`: `{ "message": "Event canceled successfully" }`
+- `403 Forbidden`: `{ "error": "You are not the owner of this event" }`
+- `404 Not Found`: `{ "error": "Event not found" }`
+- `500 Internal Server Error`: `{ "error": "Failed to cancel event" }`
+
+---
+
+#### 13. Update Event Status
+**POST** `/api/events/:id/update`
+
+Mengubah status event secara manual oleh vendor. Status hanya bisa diubah menjadi `ended` (jika event sedang berjalan/minting) atau kembali ke `minting` (jika event sudah `ended`).
+
+**Parameters**
+- `id` (di URL): ID event.
+
+**Body**
+```json
+{
+  "status": "ended",
+  "wallet_address": "0xVendorWalletAddress"
+}
+```
+
+**Response**
+- `200 OK`: `{ "message": "Event status updated successfully to ended" }`
+- `400 Bad Request`: Jika status tidak valid atau `wallet_address` kosong.
+- `403 Forbidden`: Jika vendor bukan pemilik event atau jika logika perubahan status tidak sesuai (misal, mengubah ke 'ended' saat event belum mulai).
+- `404 Not Found`: Jika event atau vendor tidak ditemukan.
+- `500 Internal Server Error`: Jika terjadi kesalahan server.
+
+---
+
+#### 14. Get Attendance by Event
 **GET** `/api/attendance/event/:event_id`
 
 Returns all users who are in the whitelist for the specified event, along with their attendance status (present/absent) and the time they attended (if present).
@@ -874,65 +924,6 @@ Returns all users who are in the whitelist for the specified event, along with t
   "error": "Failed to process attendance data. Please contact support if this continues."
 }
 ```
-
----
-
-#### 13. Mark Attendance
-**POST** `/api/users/attend`
-
-Marks a user's attendance for an event using a token.
-
-#### Request Body
-**Content-Type:** `application/json`
-
-```json
-{
-  "token": "a1b2c",
-  "wallet_address": "0x1234567890abcdef..."
-}
-```
-
-| Field          | Type   | Required | Description                               |
-|----------------|--------|----------|-------------------------------------------|
-| token          | string | Yes      | The 5-character event token.              |
-| wallet_address | string | Yes      | The user's wallet address.                |
-
-#### Responses
-**Success (200 OK)**
-```json
-{
-  "message": "Attendance marked successfully"
-}
-```
-
-**Error Responses**
-
-*   **400 Bad Request** - Missing required fields.
-    ```json
-    { "error": "token and wallet_address are required" }
-    ```
-*   **403 Forbidden** - Event not ongoing or user not approved.
-    ```json
-    { "error": "Attendance is not open for this event right now" }
-    ```
-    ```json
-    { "error": "Your whitelist status is not approved" }
-    ```
-*   **404 Not Found** - Invalid token or user not found.
-    ```json
-    { "error": "Invalid event token" }
-    ```
-    ```json
-    { "error": "User with this wallet address not found" }
-    ```
-*   **409 Conflict** - User has already marked attendance.
-    ```json
-    { "error": "You have already marked your attendance for this event" }
-    ```
-*   **500 Internal Server Error**
-    ```json
-    { "error": "server error message" }
-    ```
 
 ---
 
