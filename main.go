@@ -77,6 +77,7 @@ type CertificateWithEvent struct {
 }
 
 var db *sql.DB
+var appStartTime time.Time
 
 //==============================================
 // HELPER FUNCTIONS
@@ -187,6 +188,12 @@ func main() {
 	// Vendor endpoints
 	api.POST("/vendors/register", registerVendorHandler)
 	api.GET("/vendors/:walletAddress/events", getEventsByVendorWalletAddressHandler)
+
+	// Health check endpoint
+	api.GET("/health", healthHandler)
+
+	// Set waktu mulai aplikasi untuk uptime
+	appStartTime = time.Now()
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -1206,9 +1213,13 @@ func getEventsByVendorWalletAddressHandler(c echo.Context) error {
 	}
 	defer rows.Close()
 
-	var events []Event
+	type EventWithCert struct {
+		Event
+		CertificateUploaded bool `json:"certificate_uploaded"`
+	}
+	var events []EventWithCert
 	for rows.Next() {
-		var event Event
+		var event EventWithCert
 		var dbStatus string
 		var startDate, endDate time.Time
 		var picturePath string
@@ -1224,7 +1235,55 @@ func getEventsByVendorWalletAddressHandler(c echo.Context) error {
 		event.EndDate = endDate
 		event.Status = calculateStatus(dbStatus, startDate, endDate)
 		event.Picture = "https://api.gpadaka.com/" + picturePath
+
+		// Tambahkan pengecekan certificate_uploaded
+		var certCount int
+		db.QueryRow("SELECT COUNT(*) FROM event_certificates WHERE event_id = $1 AND url_certificate IS NOT NULL AND url_certificate <> ''", event.ID).Scan(&certCount)
+		event.CertificateUploaded = certCount > 0
 		events = append(events, event)
 	}
 	return c.JSON(http.StatusOK, events)
+}
+
+//==============================================
+// HEALTH CHECK HANDLER
+//==============================================
+func healthHandler(c echo.Context) error {
+	// Cek koneksi database
+	dbStatus := "ok"
+	dbErr := db.Ping()
+	if dbErr != nil {
+		dbStatus = dbErr.Error()
+	}
+
+	// Info versi aplikasi (bisa di-set manual atau dari env)
+	appVersion := os.Getenv("APP_VERSION")
+	if appVersion == "" {
+		appVersion = "dev"
+	}
+
+	// Info environment
+	env := os.Getenv("APP_ENV")
+	if env == "" {
+		env = "development"
+	}
+
+	// Info waktu server
+	serverTime := time.Now().Format(time.RFC3339)
+
+	// Info host
+	hostname, _ := os.Hostname()
+
+	// Info uptime
+	uptime := time.Since(appStartTime).String()
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"status": "ok",
+		"database": dbStatus,
+		"server_time": serverTime,
+		"app_version": appVersion,
+		"environment": env,
+		"hostname": hostname,
+		"uptime": uptime,
+	})
 }
