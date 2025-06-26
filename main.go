@@ -154,7 +154,7 @@ func loginHandler(c echo.Context) error {
 
 	if role != "" {
 		return c.JSON(http.StatusOK, map[string]interface{}{
-			"isNewUser":     false,
+			"isNewUser":      false,
 			"wallet_address": body.WalletAddress,
 			"role":           role,
 		})
@@ -421,113 +421,6 @@ type CertificateWithEvent struct {
 	EventPicture        string    `json:"event_picture"`
 }
 
-// Handler to get events by vendor wallet address
-func getEventsByVendorWalletAddressHandler(c echo.Context) error {
-	walletAddress := c.Param("walletAddress")
-	if walletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress is required"})
-	}
-
-	var vendorID int
-	err := db.QueryRow(`SELECT id FROM vendors WHERE wallet_address = $1`, walletAddress).Scan(&vendorID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "vendor not found"})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-
-	query := `
-		SELECT 
-			e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date, 
-			e.status, e.created_at, e.updated_at, e.picture, e.maxattendees, e.location,
-			e.requirements, e.agenda,
-			COALESCE(present_count.attendees, 0) as attendees
-		FROM events e
-		LEFT JOIN (
-			SELECT event_id, COUNT(id) as attendees
-			FROM attendance
-			WHERE attendance_status = 'present'
-			GROUP BY event_id
-		) present_count ON e.id = present_count.event_id
-		WHERE e.vendor_id = $1
-		ORDER BY e.start_date ASC
-	`
-
-	rows, err := db.Query(query, vendorID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-	defer rows.Close()
-
-	var events []Event
-	for rows.Next() {
-		var e Event
-		err := rows.Scan(
-			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt,
-			&e.Picture, &e.MaxAttendees, &e.Location, &e.Requirements, &e.Agenda, &e.Attendees,
-		)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		events = append(events, e)
-	}
-
-	return c.JSON(http.StatusOK, events)
-}
-
-func getCertificatesByWalletAddressHandler(c echo.Context) error {
-	walletAddress := c.Param("walletAddress")
-	if walletAddress == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress is required"})
-	}
-
-	var userID int
-	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, walletAddress).Scan(&userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-
-	rows, err := db.Query(`
-		SELECT 
-			c.id, c.event_id, c.user_id, c.certificate_data, c.mint_status, c.mint_transaction_hash, c.created_at, c.updated_at,
-			e.title, e.description, e.start_date, e.location, e.picture
-		FROM certificates c
-		JOIN events e ON c.event_id = e.id
-		WHERE c.user_id = $1
-		ORDER BY c.created_at DESC
-	`, userID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-	defer rows.Close()
-
-	var certificates []CertificateWithEvent
-	for rows.Next() {
-		var cert CertificateWithEvent
-		var pictureRaw string
-		err := rows.Scan(
-			&cert.ID, &cert.EventID, &cert.UserID, &cert.CertificateData, &cert.MintStatus, &cert.MintTransactionHash, &cert.CreatedAt, &cert.UpdatedAt,
-			&cert.EventTitle, &cert.EventDescription, &cert.EventStartDate, &cert.EventLocation, &pictureRaw,
-		)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		// Convert picture field to URL path
-		if pictureRaw != "" {
-			cert.EventPicture = "https://api.gpadaka.com/" + pictureRaw
-		} else {
-			cert.EventPicture = ""
-		}
-		certificates = append(certificates, cert)
-	}
-
-	return c.JSON(http.StatusOK, certificates)
-}
-
 func createEventHandler(c echo.Context) error {
 	title := c.FormValue("title")
 	description := c.FormValue("description")
@@ -701,41 +594,41 @@ func createEventHandler(c echo.Context) error {
 	}
 
 	type EventCreateResponse struct {
-		ID           int             `json:"id"`
-		Title        string          `json:"title"`
-		Description  string          `json:"description"`
-		VendorID     int             `json:"vendor_id"`
-		WalletAddress string         `json:"wallet_address"`
-		StartDate    time.Time       `json:"start_date"`
-		EndDate      time.Time       `json:"end_date"`
-		Status       string          `json:"status"`
-		CreatedAt    time.Time       `json:"created_at"`
-		UpdatedAt    time.Time       `json:"updated_at"`
-		Picture      string          `json:"picture"`
-		MaxAttendees int             `json:"maxattendees"`
-		Location     string          `json:"location"`
-		Requirements json.RawMessage `json:"requirements,omitempty"`
-		Agenda       json.RawMessage `json:"agenda,omitempty"`
-		Token        string          `json:"token"`
+		ID            int             `json:"id"`
+		Title         string          `json:"title"`
+		Description   string          `json:"description"`
+		VendorID      int             `json:"vendor_id"`
+		WalletAddress string          `json:"wallet_address"`
+		StartDate     time.Time       `json:"start_date"`
+		EndDate       time.Time       `json:"end_date"`
+		Status        string          `json:"status"`
+		CreatedAt     time.Time       `json:"created_at"`
+		UpdatedAt     time.Time       `json:"updated_at"`
+		Picture       string          `json:"picture"`
+		MaxAttendees  int             `json:"maxattendees"`
+		Location      string          `json:"location"`
+		Requirements  json.RawMessage `json:"requirements,omitempty"`
+		Agenda        json.RawMessage `json:"agenda,omitempty"`
+		Token         string          `json:"token"`
 	}
 
 	resp := EventCreateResponse{
-		ID:           event.ID,
-		Title:        event.Title,
-		Description:  event.Description,
-		VendorID:     event.VendorID,
+		ID:            event.ID,
+		Title:         event.Title,
+		Description:   event.Description,
+		VendorID:      event.VendorID,
 		WalletAddress: walletAddressResponse,
-		StartDate:    event.StartDate,
-		EndDate:      event.EndDate,
-		Status:       event.Status,
-		CreatedAt:    event.CreatedAt,
-		UpdatedAt:    event.UpdatedAt,
-		Picture:      event.Picture,
-		MaxAttendees: event.MaxAttendees,
-		Location:     event.Location,
-		Requirements: event.Requirements,
-		Agenda:       event.Agenda,
-		Token:        event.Token,
+		StartDate:     event.StartDate,
+		EndDate:       event.EndDate,
+		Status:        event.Status,
+		CreatedAt:     event.CreatedAt,
+		UpdatedAt:     event.UpdatedAt,
+		Picture:       event.Picture,
+		MaxAttendees:  event.MaxAttendees,
+		Location:      event.Location,
+		Requirements:  event.Requirements,
+		Agenda:        event.Agenda,
+		Token:         event.Token,
 	}
 
 	return c.JSON(http.StatusCreated, resp)
@@ -752,7 +645,7 @@ func getEventDetailHandler(c echo.Context) error {
       SELECT 
         e.id, v.vendor_name, e.title, e.description, e.vendor_id,
         e.start_date, e.end_date, e.status, e.created_at, e.updated_at,
-        e.picture, e.maxattendees, e.location, e.requirements, e.agenda,
+        e.picture, e.maxattendees, e.location, e.requirements, e.agenda, e.token,
         COUNT(a.id) as attendees
       FROM events e
       LEFT JOIN vendors v ON e.vendor_id = v.id
@@ -778,13 +671,14 @@ func getEventDetailHandler(c echo.Context) error {
 		Location     string
 		Requirements json.RawMessage
 		Agenda       json.RawMessage
+		Token        string
 		Attendees    int
 	}
 
 	err := row.Scan(
 		&dbEvent.ID, &dbEvent.Organizer, &dbEvent.Title, &dbEvent.Description, &dbEvent.VendorID,
 		&dbEvent.StartDate, &dbEvent.EndDate, &dbEvent.Status, &dbEvent.CreatedAt, &dbEvent.UpdatedAt,
-		&dbEvent.Picture, &dbEvent.MaxAttendees, &dbEvent.Location, &dbEvent.Requirements, &dbEvent.Agenda,
+		&dbEvent.Picture, &dbEvent.MaxAttendees, &dbEvent.Location, &dbEvent.Requirements, &dbEvent.Agenda, &dbEvent.Token,
 		&dbEvent.Attendees,
 	)
 	if err != nil {
@@ -830,6 +724,7 @@ func getEventDetailHandler(c echo.Context) error {
 		Minted       int             `json:"minted"`
 		Requirements json.RawMessage `json:"requirements,omitempty"`
 		Agenda       json.RawMessage `json:"agenda,omitempty"`
+		Token        string          `json:"token"`
 	}
 
 	response := EventDetailResponse{
@@ -850,6 +745,7 @@ func getEventDetailHandler(c echo.Context) error {
 		Minted:       mintedCount,
 		Requirements: dbEvent.Requirements,
 		Agenda:       dbEvent.Agenda,
+		Token:        dbEvent.Token,
 	}
 
 	if dbEvent.Organizer.Valid {
@@ -1106,7 +1002,112 @@ func getUserByWhitelist(c echo.Context) error {
 	return c.JSON(http.StatusOK, whitelisted)
 }
 
-// Handler to get attendance status for all whitelisted users in an event
+func getCertificatesByWalletAddressHandler(c echo.Context) error {
+	walletAddress := c.Param("walletAddress")
+	if walletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress is required"})
+	}
+
+	var userID int
+	err := db.QueryRow(`SELECT id FROM users WHERE wallet_address = $1`, walletAddress).Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	rows, err := db.Query(`
+		SELECT 
+			c.id, c.event_id, c.user_id, c.certificate_data, c.mint_status, c.mint_transaction_hash, c.created_at, c.updated_at,
+			e.title, e.description, e.start_date, e.location, e.picture
+		FROM certificates c
+		JOIN events e ON c.event_id = e.id
+		WHERE c.user_id = $1
+		ORDER BY c.created_at DESC
+	`, userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	var certificates []CertificateWithEvent
+	for rows.Next() {
+		var cert CertificateWithEvent
+		var pictureRaw string
+		err := rows.Scan(
+			&cert.ID, &cert.EventID, &cert.UserID, &cert.CertificateData, &cert.MintStatus, &cert.MintTransactionHash, &cert.CreatedAt, &cert.UpdatedAt,
+			&cert.EventTitle, &cert.EventDescription, &cert.EventStartDate, &cert.EventLocation, &pictureRaw,
+		)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		// Convert picture field to URL path
+		if pictureRaw != "" {
+			cert.EventPicture = "https://api.gpadaka.com/" + pictureRaw
+		} else {
+			cert.EventPicture = ""
+		}
+		certificates = append(certificates, cert)
+	}
+
+	return c.JSON(http.StatusOK, certificates)
+}
+
+func getEventsByVendorWalletAddressHandler(c echo.Context) error {
+	walletAddress := c.Param("walletAddress")
+	if walletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletAddress is required"})
+	}
+
+	var vendorID int
+	err := db.QueryRow(`SELECT id FROM vendors WHERE wallet_address = $1`, walletAddress).Scan(&vendorID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "vendor not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	query := `
+		SELECT 
+			e.id, e.title, e.description, e.vendor_id, e.start_date, e.end_date, 
+			e.status, e.created_at, e.updated_at, e.picture, e.maxattendees, e.location,
+			e.requirements, e.agenda,
+			COALESCE(present_count.attendees, 0) as attendees
+		FROM events e
+		LEFT JOIN (
+			SELECT event_id, COUNT(id) as attendees
+			FROM attendance
+			WHERE attendance_status = 'present'
+			GROUP BY event_id
+		) present_count ON e.id = present_count.event_id
+		WHERE e.vendor_id = $1
+		ORDER BY e.start_date ASC
+	`
+
+	rows, err := db.Query(query, vendorID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		var e Event
+		err := rows.Scan(
+			&e.ID, &e.Title, &e.Description, &e.VendorID, &e.StartDate, &e.EndDate, &e.Status, &e.CreatedAt, &e.UpdatedAt,
+			&e.Picture, &e.MaxAttendees, &e.Location, &e.Requirements, &e.Agenda, &e.Attendees,
+		)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		events = append(events, e)
+	}
+
+	return c.JSON(http.StatusOK, events)
+}
+
 func getAttendanceByEventHandler(c echo.Context) error {
 	eventIDStr := c.Param("event_id")
 	if eventIDStr == "" {
