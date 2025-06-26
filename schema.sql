@@ -29,7 +29,13 @@ CREATE TABLE events (
     end_date TIMESTAMP NOT NULL,
     status VARCHAR(20) CHECK (status IN ('upcoming', 'ongoing', 'completed')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    picture BYTEA NOT NULL,
+    maxattendees INTEGER DEFAULT 0 NOT NULL,
+    location VARCHAR(255) DEFAULT ''::character varying,
+    requirements JSONB DEFAULT '[]'::jsonb,
+    agenda JSONB DEFAULT '[]'::jsonb,
+    token VARCHAR(5) UNIQUE NOT NULL DEFAULT (substring(md5(random()::text) from 1 for 5))
 );
 
 -- Whitelist
@@ -47,11 +53,11 @@ CREATE TABLE attendance (
     id SERIAL PRIMARY KEY,
     event_id INTEGER REFERENCES events(id),
     user_id INTEGER REFERENCES users(id),
-    qr_code TEXT NOT NULL,
-    qr_expires_at TIMESTAMP NOT NULL,
+    token_input VARCHAR(5),
     attendance_status VARCHAR(10) CHECK (attendance_status IN ('present', 'absent')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(event_id, user_id)
 );
 
 -- Certificates
