@@ -33,6 +33,7 @@ type Event struct {
 	Attendees    int             `json:"attendees"`
 	Requirements json.RawMessage `json:"requirements,omitempty"`
 	Agenda       json.RawMessage `json:"agenda,omitempty"`
+	Token        string          `json:"token,omitempty"`
 }
 
 type User struct {
@@ -213,6 +214,7 @@ func main() {
 	e.GET("/api/users/:walletAddress", getUserByWalletAddressHandler)
 	e.GET("/api/events/:id/whitelist", getUserByWhitelist)
 	e.GET("/api/attendance/event/:event_id", getAttendanceByEventHandler)
+	e.POST("/api/attendance/mark", markAttendanceHandler)
 
 	e.Logger.Fatal(e.Start(":4002"))
 }
@@ -651,7 +653,7 @@ func createEventHandler(c echo.Context) error {
 			title, description, vendor_id, start_date, end_date,
 			status, picture, maxattendees, location, requirements, agenda
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-	    RETURNING id, created_at, updated_at
+	    RETURNING id, created_at, updated_at, token
 	`
 
 	row := db.QueryRow(query,
@@ -670,7 +672,7 @@ func createEventHandler(c echo.Context) error {
 
 	fmt.Println("QueryRow executed, now scanning result...")
 
-	err = row.Scan(&event.ID, &event.CreatedAt, &event.UpdatedAt)
+	err = row.Scan(&event.ID, &event.CreatedAt, &event.UpdatedAt, &event.Token)
 	if err != nil {
 		fmt.Println("DB Scan failed:", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DB scan failed", "details": err.Error()})
@@ -699,6 +701,7 @@ func createEventHandler(c echo.Context) error {
 		Location     string          `json:"location"`
 		Requirements json.RawMessage `json:"requirements,omitempty"`
 		Agenda       json.RawMessage `json:"agenda,omitempty"`
+		Token        string          `json:"token"`
 	}
 
 	resp := EventCreateResponse{
@@ -717,6 +720,7 @@ func createEventHandler(c echo.Context) error {
 		Location:     event.Location,
 		Requirements: event.Requirements,
 		Agenda:       event.Agenda,
+		Token:        event.Token,
 	}
 
 	return c.JSON(http.StatusCreated, resp)
@@ -1140,4 +1144,80 @@ func getAttendanceByEventHandler(c echo.Context) error {
 
 	// If no whitelist entries, return empty array
 	return c.JSON(http.StatusOK, result)
+}
+
+func markAttendanceHandler(c echo.Context) error {
+	var payload struct {
+		Token         string `json:"token"`
+		WalletAddress string `json:"wallet_address"`
+	}
+
+	if err := c.Bind(&payload); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+
+	if payload.Token == "" || payload.WalletAddress == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "token and wallet_address are required"})
+	}
+
+	// 1. Find event by token and check if it's ongoing
+	var eventID int
+	var eventStatus string
+	err := db.QueryRow("SELECT id, status FROM events WHERE token = $1", payload.Token).Scan(&eventID, &eventStatus)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Invalid event token"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to find event"})
+	}
+
+	if eventStatus != "ongoing" {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Attendance is not open for this event right now"})
+	}
+
+	// 2. Find user by wallet address
+	var userID int
+	err = db.QueryRow("SELECT id FROM users WHERE wallet_address = $1", payload.WalletAddress).Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "User with this wallet address not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to find user"})
+	}
+
+	// 3. Check if user is whitelisted and approved
+	var whitelistStatus string
+	err = db.QueryRow("SELECT status FROM whitelist WHERE event_id = $1 AND user_id = $2", eventID, userID).Scan(&whitelistStatus)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "You are not whitelisted for this event"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check whitelist status"})
+	}
+
+	if whitelistStatus != "approved" {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "Your whitelist status is not approved"})
+	}
+
+	// 4. Check for existing attendance (no need to check for status, as long as there is an entry, it's a duplicate)
+	var existingAttendanceID int
+	err = db.QueryRow("SELECT id FROM attendance WHERE event_id = $1 AND user_id = $2", eventID, userID).Scan(&existingAttendanceID)
+	if err != nil && err != sql.ErrNoRows {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check existing attendance"})
+	}
+	if err == nil {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "You have already marked your attendance for this event"})
+	}
+
+	// 5. Insert into attendance table
+	_, err = db.Exec(`
+        INSERT INTO attendance (event_id, user_id, token_input, attendance_status)
+        VALUES ($1, $2, $3, 'present')
+    `, eventID, userID, payload.Token)
+
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to mark attendance"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Attendance marked successfully"})
 }
