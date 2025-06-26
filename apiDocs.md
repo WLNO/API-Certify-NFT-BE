@@ -649,9 +649,8 @@ Creates a new event. Requires multipart form data.
 | title | string | Yes | Event title |
 | description | string | No | Event description |
 | wallet_address | string | Yes | Vendor's wallet address (must be registered) |
-| start_date | string | Yes | Start date in RFC3339 format (e.g., "2024-06-15T09:00:00Z") |
-| end_date | string | Yes | End date in RFC3339 format (e.g., "2024-06-15T17:00:00Z") |
-| status | string | Yes | Event status (e.g., "upcoming", "ongoing", "completed") |
+| start_date | string | Yes | Start date in `YYYY-MM-DDTHH:MM` format (e.g., "2024-06-15T09:00") |
+| end_date | string | Yes | End date in `YYYY-MM-DDTHH:MM` format (e.g., "2024-06-15T17:00") |
 | maxattendees | integer | Yes | Maximum number of attendees |
 | location | string | No | Event location |
 | requirements | string | No | JSON string containing event requirements |
@@ -659,6 +658,7 @@ Creates a new event. Requires multipart form data.
 | picture | file | Yes | Event image file |
 
 > **Note:** The vendor_id is determined automatically from the provided wallet_address.
+> The `status` field is not required in the request; it is automatically set to `upcoming` on creation. Dates are parsed based on the server's local time zone.
 
 #### Response
 **Success (201 Created)**
@@ -841,7 +841,7 @@ Membatalkan event. Hanya bisa dilakukan oleh vendor pemilik event.
 #### 13. Update Event Status
 **POST** `/api/events/:id/update`
 
-Mengubah status event secara manual oleh vendor. Status hanya bisa diubah menjadi `ended` (jika event sedang berjalan/minting) atau kembali ke `minting` (jika event sudah `ended`).
+Mengubah status event secara manual oleh vendor. Status bisa diubah menjadi `ended` hanya jika waktu event telah berakhir (status terhitung sistem adalah `minting`). Status juga bisa diubah kembali ke `minting` dari `ended`.
 
 **Parameters**
 - `id` (di URL): ID event.

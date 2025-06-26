@@ -27,7 +27,7 @@ CREATE TABLE events (
     vendor_id INTEGER REFERENCES vendors(id),
     start_date TIMESTAMP WITH TIME ZONE NOT NULL,
     end_date TIMESTAMP WITH TIME ZONE NOT NULL,
-    status VARCHAR(50) DEFAULT 'upcoming',
+    status VARCHAR(50) DEFAULT 'upcoming' CHECK (status IN ('upcoming', 'minting', 'ended', 'canceled')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     picture VARCHAR(255) NOT NULL,
