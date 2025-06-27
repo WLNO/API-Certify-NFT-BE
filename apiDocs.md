@@ -39,6 +39,9 @@ Currently, the API uses wallet address-based authentication. Users and vendors a
 ### Health
 - **`GET /api/health`**: Health Check
 
+### Certificates
+- **`GET /api/certificate/all`**: Retrieves all certificates.
+
 ---
 
 ## Endpoints
@@ -974,6 +977,80 @@ Cek status aplikasi dan infrastruktur secara menyeluruh.
   "status": "error",
   "database": "connection refused",
   ...
+}
+```
+
+---
+
+### Certificates
+
+#### 16. Get All Certificates
+**GET** `/api/certificate/all`
+
+Mengambil seluruh data certificate dari tabel certificates.
+
+#### Response
+**Success (200 OK)**
+```json
+[
+  {
+    "id": 1,
+    "event_id": 12,
+    "user_id": 1,
+    "certificate_data": { "raw": "Sertifikat keikutsertaan acara Blockchain Conference" },
+    "mint_status": "minted",
+    "mint_transaction_hash": "0xabc123transactionhash",
+    "created_at": "2025-06-22T18:22:59+07:00",
+    "updated_at": "2025-06-22T18:22:59+07:00",
+    "url_metadata": null,
+    "url_certificate": null,
+    "certificate_type": null
+  },
+  {
+    "id": 5,
+    "event_id": 12,
+    "user_id": 3,
+    "certificate_data": {
+      "certificateType": "Certificate for Event ID 12",
+      "tokenURI": "ipfs://bafkreiaomff7dpx2xx62kax3e7il5eaqkpzwhrio5hr2odndyzesaxvl4y",
+      "urlCertificate": "ipfs://bafybeifu5zseszbhc3jxznydnavboq3v5gzf3wgya3vmu4npwp24527tqi",
+      "urlMetadata": "https://bafkreiaomff7dpx2xx62kax3e7il5eaqkpzwhrio5hr2odndyzesaxvl4y.ipfs.w3s.link/",
+      "user_address": "0xaccB5E0993c482c95a0Cc4ed33958Fc689fa55D6"
+    },
+    "mint_status": "minted",
+    "mint_transaction_hash": "0x586e9551bccc534e5a6ac74be1acd65bbc4977fcdc95a928e9e67bb48048c68f",
+    "created_at": "2025-06-26T00:33:01+07:00",
+    "updated_at": "2025-06-26T00:33:01+07:00",
+    "url_metadata": "https://bafkreiaomff7dpx2xx62kax3e7il5eaqkpzwhrio5hr2odndyzesaxvl4y.ipfs.w3s.link/",
+    "url_certificate": "ipfs://bafybeifu5zseszbhc3jxznydnavboq3v5gzf3wgya3vmu4npwp24527tqi",
+    "certificate_type": "Certificate for Event ID 12"
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| id | integer | ID certificate |
+| event_id | integer | ID event |
+| user_id | integer | ID user |
+| certificate_data | object | Data JSON (bisa raw string jika data lama) |
+| mint_status | string | Status minting (pending, minted, failed) |
+| mint_transaction_hash | string | Hash transaksi mint |
+| created_at | string | Timestamp dibuat |
+| updated_at | string | Timestamp update terakhir |
+| url_metadata | string/null | URL metadata IPFS |
+| url_certificate | string/null | URL file certificate |
+| certificate_type | string/null | Tipe/nama sertifikat |
+
+**Catatan:**
+- Jika data lama, certificate_data akan berupa `{ "raw": "..." }`.
+- Jika data baru, certificate_data akan berupa objek JSON terstruktur.
+- Kolom yang NULL di database akan muncul sebagai `null` di response.
+
+**Error (500 Internal Server Error)**
+```json
+{
+  "error": "Failed to query certificates"
 }
 ```
 
