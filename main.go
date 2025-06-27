@@ -167,6 +167,9 @@ func main() {
 
 	// Auth endpoints
 	api.POST("/auth/login", loginHandler)
+	api.POST("/users/register", registerUserHandler)
+	api.POST("/vendors/register", registerVendorHandler)
+
 
 	// Event endpoints
 	api.GET("/events/all", getEventsHandler)
@@ -178,25 +181,20 @@ func main() {
 	api.GET("/events/:id/whitelist", getUserByWhitelist)
 
 	// User endpoints
-	api.POST("/users/register", registerUserHandler)
 	api.POST("/users/attend", markAttendanceHandler)
 	api.GET("/users/:walletAddress", getUserByWalletAddressHandler)
 	api.GET("/users/:walletAddress/events", getEventsByWalletAddressHandler)
 	api.GET("/users/:walletAddress/certificate", getCertificatesByWalletAddressHandler)
 	api.POST("/users/whitelist", createWhitelistHandler)
 	api.POST("/users/whitelist/cancel", cancelWhitelistHandler)
+	api.GET("/users/:walletAddress/events/:eventId/attendance-status", getUserAttendanceStatusHandler)
+	api.GET("/users/:walletAddress/events/:eventId/whitelist-status", getUserWhitelistStatusHandler)
 
 	// Vendor endpoints
-	api.POST("/vendors/register", registerVendorHandler)
 	api.GET("/vendors/:walletAddress/events", getEventsByVendorWalletAddressHandler)
 
 	// Health check endpoint
 	api.GET("/health", healthHandler)
-
-	// Endpoint: cek status absen user
-	api.GET("/users/:walletAddress/events/:eventId/attendance-status", getUserAttendanceStatusHandler)
-	// Endpoint: cek status whitelist user
-	api.GET("/users/:walletAddress/events/:eventId/whitelist-status", getUserWhitelistStatusHandler)
 
 	// Endpoint: get all certificates
 	api.GET("/certificate/all", getCertificateHandler)
