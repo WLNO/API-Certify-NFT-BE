@@ -198,6 +198,9 @@ func main() {
 	// Endpoint: cek status whitelist user
 	api.GET("/users/:walletAddress/events/:eventId/whitelist-status", getUserWhitelistStatusHandler)
 
+	// Endpoint: get all certificates
+	api.GET("/certificate/all", getCertificateHandler)
+
 	// Set waktu mulai aplikasi untuk uptime
 	appStartTime = time.Now()
 
@@ -936,7 +939,8 @@ func getCertificatesByWalletAddressHandler(c echo.Context) error {
 			&cert.EventTitle, &cert.EventDescription, &cert.EventStartDate, &cert.EventLocation, &pictureRaw,
 		)
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			log.Println("Failed to scan certificate:", err)
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to scan certificate"})
 		}
 		// Convert picture field to URL path
 		if pictureRaw != "" {
@@ -1350,4 +1354,75 @@ func getUserWhitelistStatusHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to check whitelist"})
 	}
 	return c.JSON(http.StatusOK, map[string]bool{"whitelisted": count > 0})
+}
+
+// Handler: get all certificates
+func getCertificateHandler(c echo.Context) error {
+	rows, err := db.Query(`SELECT id, event_id, user_id, certificate_data, mint_status, mint_transaction_hash, created_at, updated_at, url_metadata, url_certificate, certificate_type FROM certificates`)
+	if err != nil {
+		log.Println("Failed to query certificates:", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to query certificates"})
+	}
+	defer rows.Close()
+
+	type Certificate struct {
+		ID                  int                    `json:"id"`
+		EventID             *int                   `json:"event_id"`
+		UserID              *int                   `json:"user_id"`
+		CertificateData     map[string]interface{} `json:"certificate_data"`
+		MintStatus          *string                `json:"mint_status"`
+		MintTransactionHash *string                `json:"mint_transaction_hash"`
+		CreatedAt           string                 `json:"created_at"`
+		UpdatedAt           string                 `json:"updated_at"`
+		UrlMetadata         *string                `json:"url_metadata"`
+		UrlCertificate      *string                `json:"url_certificate"`
+		CertificateType     *string                `json:"certificate_type"`
+	}
+
+	var result []Certificate
+	for rows.Next() {
+		var cert Certificate
+		var certDataRaw sql.NullString
+		var eventID, userID sql.NullInt64
+		var mintStatus, mintTxHash, urlMetadata, urlCertificate, certType sql.NullString
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&cert.ID, &eventID, &userID, &certDataRaw, &mintStatus, &mintTxHash, &createdAt, &updatedAt, &urlMetadata, &urlCertificate, &certType); err != nil {
+			log.Println("Failed to scan certificate:", err)
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to scan certificate"})
+		}
+		if eventID.Valid {
+			v := int(eventID.Int64)
+			cert.EventID = &v
+		}
+		if userID.Valid {
+			v := int(userID.Int64)
+			cert.UserID = &v
+		}
+		if mintStatus.Valid {
+			cert.MintStatus = &mintStatus.String
+		}
+		if mintTxHash.Valid {
+			cert.MintTransactionHash = &mintTxHash.String
+		}
+		if urlMetadata.Valid {
+			cert.UrlMetadata = &urlMetadata.String
+		}
+		if urlCertificate.Valid {
+			cert.UrlCertificate = &urlCertificate.String
+		}
+		if certType.Valid {
+			cert.CertificateType = &certType.String
+		}
+		cert.CreatedAt = createdAt.Format(time.RFC3339)
+		cert.UpdatedAt = updatedAt.Format(time.RFC3339)
+		if certDataRaw.Valid {
+			if err := json.Unmarshal([]byte(certDataRaw.String), &cert.CertificateData); err != nil {
+				cert.CertificateData = map[string]interface{}{"raw": certDataRaw.String}
+			}
+		} else {
+			cert.CertificateData = nil
+		}
+		result = append(result, cert)
+	}
+	return c.JSON(http.StatusOK, result)
 }
