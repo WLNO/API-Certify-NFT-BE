@@ -481,12 +481,14 @@ func getEventDetailHandler(c echo.Context) error {
 			COALESCE(mint_counts.minted, 0) as minted,
 			e.requirements,
 			e.agenda,
-			e.token
+			e.token,
+			COALESCE(ec.url_certificate, '') as url_certificate
 		FROM events e
 		LEFT JOIN vendors v ON e.vendor_id = v.id
 		LEFT JOIN (SELECT event_id, COUNT(*) as attendees FROM attendance WHERE attendance_status = 'present' GROUP BY event_id) att_counts ON e.id = att_counts.event_id
 		LEFT JOIN (SELECT event_id, COUNT(*) as whitelisted FROM whitelist WHERE status = 'approved' GROUP BY event_id) wl_counts ON e.id = wl_counts.event_id
 		LEFT JOIN (SELECT event_id, COUNT(*) as minted FROM certificates WHERE mint_status = 'success' GROUP BY event_id) mint_counts ON e.id = mint_counts.event_id
+		LEFT JOIN event_certificates ec ON e.id = ec.event_id
 		WHERE e.id = $1
 	`
 	var event struct {
@@ -509,6 +511,7 @@ func getEventDetailHandler(c echo.Context) error {
 		Requirements json.RawMessage `json:"requirements,omitempty"`
 		Agenda       json.RawMessage `json:"agenda,omitempty"`
 		Token        string          `json:"token"`
+		UrlCertificate *string       `json:"url_certificate,omitempty"`
 	}
 	var dbStatus string
 	var startDate, endDate time.Time
@@ -519,7 +522,7 @@ func getEventDetailHandler(c echo.Context) error {
 		&event.VendorID, &startDate, &endDate, &dbStatus,
 		&event.CreatedAt, &event.UpdatedAt, &picturePath, &event.MaxAttendees,
 		&event.Location, &event.Attendees, &event.Whitelisted, &event.Minted,
-		&event.Requirements, &event.Agenda, &event.Token,
+		&event.Requirements, &event.Agenda, &event.Token, &event.UrlCertificate,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
