@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"os"
@@ -1015,6 +1016,7 @@ func markAttendanceHandler(c echo.Context) error {
 		eventID, userID, payload.EventToken)
 
 	if err != nil {
+		log.Println("Failed to mark attendance:", err)
 		tx.Rollback()
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to mark attendance"})
 	}
