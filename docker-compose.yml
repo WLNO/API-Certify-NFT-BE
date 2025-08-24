@@ -9,7 +9,7 @@ services:
       - certify-nft-network
     volumes:
       - .env:/app/.env
-      - ./uploads:/app/uploads
+      - /home/gpadaka19/uploads:/app/uploads
 
 networks:
   certify-nft-network:
