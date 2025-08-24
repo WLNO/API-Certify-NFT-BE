@@ -1,7 +1,10 @@
-version: '3.8'
 services:
-  app:
-    build: .
+  certify-nft-api3:
+    container_name: certify-nft-api3
+    image: certify-nft-api3:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "4002:4002"
     restart: always
