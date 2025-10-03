@@ -4,7 +4,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod tidy
 COPY . .
-RUN go build -o app main.go
+RUN go build -o app cmd/api/main.go
 
 FROM alpine:latest
 WORKDIR /app
